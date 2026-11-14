@@ -187,21 +187,31 @@ def _api_ready(profile):
     return bool(profile.get("enabled"))
 
 
+def engine_label(name, profile):
+    spec = engines.spec(name)
+    model = profile.get("model", spec["model"])
+    if profile.get("model_label"):
+        label = profile["model_label"]
+    elif model == spec["model"] and spec["model_label"]:
+        label = spec["model_label"]
+    else:
+        label = model or "default model"
+    return f"{spec['label']} · {label}"
+
+
 def available(config, refresh=False):
-    """Selectable rewriters: installed CLI engines first, then ready API profiles."""
-    detected = engines.detect(refresh)
+    """Selectable rewriters: active CLI engines that are installed, then ready API profiles."""
+    ids = engines.active(config)
+    detected = engines.detect(ids, refresh)
     out = []
     profiles = config.get("profiles", {})
-    for name in engines.AUTO_ORDER:
-        spec = engines.ENGINES[name]
-        prof = profiles.get(name, {})
+    for name in ids:
         info = detected.get(name, {})
         if not info.get("installed"):
             continue
-        model = prof.get("model", spec["model"])
-        label = prof.get("model_label") or (spec["model_label"] if model == spec["model"] else model) or "default"
-        out.append({"id": name, "kind": "cli", "label": f"{spec['label']} · {label}", "short": spec["label"],
-                    "version": info.get("version", ""),
+        prof = profiles.get(name, {})
+        out.append({"id": name, "kind": "cli", "label": engine_label(name, prof),
+                    "short": engines.spec(name)["label"], "version": info.get("version", ""),
                     "blocked": name == "hermes" and not prof.get("allow_tools")})
     for name, prof in profiles.items():
         if isinstance(prof, dict) and prof.get("type") in BACKENDS and _api_ready(prof):
@@ -210,25 +220,35 @@ def available(config, refresh=False):
     return out
 
 
+def _check_active(config, name):
+    if name in engines.OPTIONAL and name not in engines.active(config):
+        raise BackendError(f"the {name} integration is not installed: run promptctl.py integration install {name}")
+
+
 def resolve(config, backend_name=None):
     """Turn 'auto' (or nothing) into a concrete profile name."""
     name = backend_name or config.get("backend") or "auto"
     if name == "claude-cli":  # pre-1.1 name
         name = "claude"
     if name != "auto":
+        _check_active(config, name)
         return name
+    for item in available(config):
+        if item["kind"] == "cli" and not item["blocked"]:
+            return item["id"]
     for item in available(config):
         if not item["blocked"]:
             return item["id"]
-    raise BackendError("no rewriter found: install Claude Code, Codex, Antigravity, Kimi Code, pi or OpenCode, "
-                       "or configure an API profile")
+    raise BackendError("no rewriter found: install Codex or Claude Code, add an integration "
+                       "(promptctl.py integration list), or configure an API profile")
 
 
 def run(config, system, user, schema, backend_name=None):
     name = resolve(config, backend_name)
     profiles = config.get("profiles", {})
+    _check_active(config, name)
     profile = profiles.get(name)
-    if profile is None and name in engines.ENGINES:
+    if profile is None and name in engines.CATALOG:
         profile = {"type": "cli"}
     if not isinstance(profile, dict):
         raise BackendError(f"unknown backend {name!r}")

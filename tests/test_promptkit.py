@@ -236,6 +236,8 @@ class EngineTests(unittest.TestCase):
         self.assertIn("\ntools: []\n", agent)
         self.assertIn("SYS", agent)
         self.assertIn("USER TEXT", agent)
+        self.assertNotIn("-m", log["argv"])  # Kimi Code's own default model
+        _, log = self.run_engine("kimi", stream, {"model": "kimi-code/kimi-for-coding"})
         self.assertEqual(log["argv"][log["argv"].index("-m") + 1], "kimi-code/kimi-for-coding")
 
     def test_pi_no_tools_no_session(self):
@@ -260,6 +262,9 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(engines.EngineError):
             self.run_engine("antigravity", json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "", "denied_actions": [{"action": "command"}]}}))
         self.assertFalse(any("dangerously" in a for a in log["argv"]))
+        self.assertNotIn("--model", log["argv"])  # agy's own default model
+        _, log = self.run_engine("antigravity", json.dumps({"event": "result", "result": {"status": "SUCCESS", "structured_output": GOOD}}),
+                                 {"model": "gemini-4-hydrogen-low"})
         self.assertEqual(log["argv"][log["argv"].index("--model") + 1], "gemini-4-hydrogen-low")
 
     def test_opencode_denies_everything(self):
@@ -300,7 +305,7 @@ class EngineTests(unittest.TestCase):
             os.environ["XDG_CACHE_HOME"] = tmp
             try:
                 with mock.patch.object(engines, "_search_dirs", return_value=[]):
-                    found = engines.detect(refresh=True)
+                    found = engines.detect(["codex", "pi"], refresh=True)
             finally:
                 os.environ["PATH"] = old_path
                 if old_cache is None:
@@ -311,15 +316,37 @@ class EngineTests(unittest.TestCase):
             self.assertTrue(found["pi"]["installed"])
             self.assertEqual(found["pi"]["version"], "9.9.9")
 
-    def test_auto_picks_first_installed_in_order(self):
-        detected = {k: {"installed": k in ("kimi", "pi", "hermes")} for k in engines.ENGINES}
-        with mock.patch.object(engines, "detect", return_value=detected):
-            cfg = config.DEFAULTS
-            self.assertEqual(backends.resolve(cfg), "pi")
-            ids = [e["id"] for e in backends.available(cfg)]
-            self.assertEqual(ids[:3], ["pi", "kimi", "hermes"])
-            self.assertTrue([e for e in backends.available(cfg) if e["id"] == "hermes"][0]["blocked"])
+    def test_auto_prefers_codex_then_claude(self):
+        everything = {k: {"installed": True} for k in engines.CATALOG}
+        with mock.patch.object(engines, "detect", side_effect=lambda ids, refresh=False: {i: everything[i] for i in ids}):
+            cfg = config._merge(config.DEFAULTS, {})
+            self.assertEqual([e["id"] for e in backends.available(cfg)], ["codex", "claude"])
+            self.assertEqual(backends.resolve(cfg), "codex")
             self.assertEqual(backends.resolve(cfg, "claude-cli"), "claude")  # old name
+        only_claude = lambda ids, refresh=False: {i: {"installed": i == "claude"} for i in ids}
+        with mock.patch.object(engines, "detect", side_effect=only_claude):
+            self.assertEqual(backends.resolve(config._merge(config.DEFAULTS, {})), "claude")
+
+    def test_optional_engines_need_install(self):
+        cfg = config._merge(config.DEFAULTS, {})
+        self.assertEqual(engines.active(cfg), ["codex", "claude"])
+        with self.assertRaises(backends.BackendError) as ctx:
+            backends.resolve(cfg, "pi")
+        self.assertIn("integration install pi", str(ctx.exception))
+        cfg = config._merge(config.DEFAULTS, {"integrations": ["pi", "hermes", "bogus"]})
+        self.assertEqual(engines.active(cfg), ["codex", "claude", "pi", "hermes"])
+        everything = lambda ids, refresh=False: {i: {"installed": True} for i in ids}
+        with mock.patch.object(engines, "detect", side_effect=everything):
+            items = {e["id"]: e for e in backends.available(cfg)}
+            self.assertTrue(items["hermes"]["blocked"])
+            self.assertEqual(backends.resolve(cfg, "pi"), "pi")
+
+    def test_every_integration_module_is_complete(self):
+        for eid in engines.CATALOG:
+            mod = engines.module(eid)
+            for key in ("label", "binaries", "model", "model_label", "options", "build", "parse"):
+                self.assertIn(key, mod.ENGINE, eid)
+            self.assertTrue(mod.DESCRIPTION and mod.SAFETY, eid)
 
 
 class CliTests(unittest.TestCase):
@@ -339,6 +366,19 @@ class CliTests(unittest.TestCase):
             self.assertFalse(bad["ok"])
             empty = self.run_cli("improve", "--text", "  ", env=env)[-1]
             self.assertEqual(empty["error"], "empty text")
+
+    def test_integration_install_uninstall(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, XDG_CONFIG_HOME=tmp + "/c", XDG_CACHE_HOME=tmp + "/k")
+            self.assertTrue(self.run_cli("integration", "install", "kimi", env=env)[0]["ok"])
+            self.run_cli("config", "set", "backend", "kimi", env=env)
+            shown = self.run_cli("config", "show", env=env)[0]["config"]
+            self.assertEqual(shown["integrations"], ["kimi"])
+            self.run_cli("integration", "uninstall", "kimi", env=env)
+            shown = self.run_cli("config", "show", env=env)[0]["config"]
+            self.assertEqual(shown["integrations"], [])
+            self.assertEqual(shown["backend"], "auto")  # no dangling default
+            self.assertFalse(self.run_cli("integration", "install", "claude", env=env)[0]["ok"])
 
     def test_config_set_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -363,3 +403,7 @@ class ConfigMigrationTests(unittest.TestCase):
         self.assertEqual(user["profiles"]["kimi-api"]["model"], "x")
         merged = config._merge(config.DEFAULTS, user)
         self.assertEqual(merged["profiles"]["kimi"]["type"], "cli")
+
+    def test_11_optional_backend_becomes_integration(self):
+        self.assertEqual(config._migrate({"backend": "pi"})["integrations"], ["pi"])
+        self.assertNotIn("integrations", config._migrate({"backend": "codex"}))

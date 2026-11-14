@@ -1,4 +1,4 @@
-"""Local AI CLI harnesses that can run the rewrite, and their detection.
+"""Local AI CLI harnesses that can run the rewrite: registry, detection, runner.
 
 Each engine runs one non-interactive turn with **every tool disabled**: the
 selected text is untrusted, so the harness must not be able to run commands
@@ -8,6 +8,7 @@ temporary directory, and no session is saved where the CLI allows that.
 An engine counts as installed only when its binary answers `--version`.
 Stale mise shims exist on disk but fail that check.
 """
+import importlib
 import json
 import os
 import shutil
@@ -16,8 +17,6 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
-from . import paths
 
 CACHE_TTL = 6 * 3600
 VERSION_TIMEOUT = 8
@@ -86,233 +85,50 @@ FIXED_ASK = ("Rewrite the prompt given in <original_prompt> in your instructions
              "Answer with the JSON object only.")
 
 
-def _schema_hint(schema):
+def schema_hint(schema):
     return "Respond with only a single JSON object matching this JSON Schema, with no other text:\n" + json.dumps(schema)
 
 
-# ------------------------------------------------------------------ engines
-# build(system, user, schema, model, tmp) -> (argv_after_binary, stdin_text)
-# parse(stdout) -> dict (structured) or str (text containing the JSON)
-
-def _claude_build(system, user, schema, model, tmp, opts):
-    args = [
-        "-p",
-        "--tools", "",
-        "--strict-mcp-config",
-        "--no-session-persistence",
-        "--disable-slash-commands",
-        "--setting-sources", "",
-        "--output-format", "json",
-        "--system-prompt", system,
-        "--json-schema", json.dumps(schema),
-    ]
-    if model:
-        args += ["--model", model]
-    if opts.get("effort"):
-        args += ["--effort", str(opts["effort"])]
-    return args, user
-
-
-def _claude_parse(stdout):
-    data = json.loads(stdout)
-    if data.get("is_error"):
-        raise EngineError(f"claude: {str(data.get('result') or data.get('subtype'))[:200]}")
-    if isinstance(data.get("structured_output"), dict):
-        return data["structured_output"]
-    return data.get("result", "")
-
-
-def _kimi_build(system, user, schema, model, tmp, opts):
-    # A custom agent with an empty tool list: it can only answer in text.
-    agent = Path(tmp) / "prompt-rewriter.md"
-    # kimi has no stdin prompt, so the material rides in the agent file.
-    agent.write_text(
-        "---\nname: prompt-rewriter\ndescription: Rewrites prompts for a target model. Has no tools.\n"
-        "tools: []\n---\n" + system + "\n\n" + _schema_hint(schema) + "\n\n" + user + "\n",
-        encoding="utf-8",
-    )
-    args = ["--agent-file", str(agent), "--output-format", "stream-json", "-p", FIXED_ASK]
-    if model:
-        args = ["-m", model] + args
-    return args, None
-
-
-def _kimi_parse(stdout):
-    texts = []
-    for line in stdout.splitlines():
-        try:
-            msg = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(msg, dict) and msg.get("role") == "assistant" and isinstance(msg.get("content"), str):
-            texts.append(msg["content"])
-    if not texts:
-        raise EngineError("kimi returned no answer")
-    return texts[-1]
-
-
-def _pi_build(system, user, schema, model, tmp, opts):
-    args = [
-        "-p", "--no-tools", "--no-session", "--no-extensions", "--no-mcp", "--no-skills",
-        "--no-prompt-templates", "--no-context-files", "--no-approve", "--offline",
-        "--system-prompt", system + "\n\n" + _schema_hint(schema),
-    ]
-    if model:
-        args += ["--model", model]
-    if opts.get("thinking"):
-        args += ["--thinking", str(opts["thinking"])]
-    return args, user
-
-
-def _text_parse(stdout):
+def text_parse(stdout):
     return stdout
 
 
-def _inline_prompt(system, user, schema):
-    # For CLIs without a system-prompt flag: instructions first, material last.
-    return f"{system}\n\n{_schema_hint(schema)}\n\n{user}"
+def inline_prompt(system, user, schema):
+    """For CLIs without a system-prompt flag: instructions first, material last."""
+    return f"{system}\n\n{schema_hint(schema)}\n\n{user}"
 
 
-def _codex_build(system, user, schema, model, tmp, opts):
-    # Read-only sandbox (no writes, no network), nothing saved to session history.
-    schema_file = Path(tmp) / "schema.json"
-    schema_file.write_text(json.dumps(schema), encoding="utf-8")
-    args = ["exec", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
-            "--output-schema", str(schema_file)]
-    if model:
-        args += ["--model", model]
-    return args + ["-"], _inline_prompt(system, user, schema)
+# ------------------------------------------------------------- integrations
+# Each module in promptkit/integrations exposes ENGINE = {label, binaries,
+# model, model_label, options, build, parse}:
+#   build(system, user, schema, model, tmp, opts) -> (argv_after_binary, stdin_text)
+#   parse(stdout) -> dict (structured) or str (text holding the JSON)
+
+# Built-in engines, always loaded; also the "auto" preference order.
+CORE = ("codex", "claude")
+# Optional integrations: imported only once installed by the user.
+OPTIONAL = ("pi", "kimi", "antigravity", "opencode", "hermes")
+CATALOG = CORE + OPTIONAL
+
+_loaded = {}
 
 
-def _agy_build(system, user, schema, model, tmp, opts):
-    # Headless Antigravity auto-denies every tool that needs approval (shell,
-    # edits; reported in "denied_actions") unless --dangerously-skip-permissions
-    # is given, which we never pass. Slash commands are off so a selection that
-    # starts with "/" is not expanded into a skill.
-    # The prompt goes in as one stream-json event on stdin.
-    args = ["--input-format", "stream-json", "--output-format", "stream-json",
-            "--disable-slash-commands", "--json-schema", json.dumps(schema)]
-    if model:
-        args += ["--model", model]
-    event = {"event": "user", "message": {"content": _inline_prompt(system, user, schema)}}
-    return args + ["--print="], json.dumps(event) + "\n"
+def module(engine_id):
+    if engine_id not in CATALOG:
+        raise EngineError(f"unknown engine {engine_id!r}")
+    if engine_id not in _loaded:
+        _loaded[engine_id] = importlib.import_module(f"{__package__}.integrations.{engine_id}")
+    return _loaded[engine_id]
 
 
-def _agy_parse(stdout):
-    data = None
-    for line in stdout.splitlines():
-        try:
-            msg = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(msg, dict) and msg.get("event") == "result" and isinstance(msg.get("result"), dict):
-            data = msg["result"]
-        elif isinstance(msg, dict) and "status" in msg and data is None:
-            data = msg  # plain --output-format json
-    if data is None:
-        raise EngineError("antigravity returned no result")
-    if data.get("status") not in (None, "SUCCESS"):
-        raise EngineError(f"antigravity: {str(data.get('error') or data.get('status'))[:200]}")
-    if isinstance(data.get("structured_output"), dict):
-        return data["structured_output"]
-    if not data.get("response") and data.get("denied_actions"):
-        raise EngineError("antigravity tried to use a tool, which is blocked; no answer")
-    return data.get("response", "")
+def spec(engine_id):
+    return module(engine_id).ENGINE
 
 
-def _opencode_build(system, user, schema, model, tmp, opts):
-    # Project config in the empty temp dir: a primary agent whose system prompt
-    # is ours and whose permissions deny every action (shell, edit, read, web...).
-    agent = {"mode": "primary", "system": system + "\n\n" + _schema_hint(schema) + "\n\n" + user,
-             "permissions": [{"action": "*", "resource": "*", "effect": "deny"}]}
-    cfg = {"$schema": "https://opencode.ai/config.json", "default_agent": "rewriter", "agents": {"rewriter": agent}}
-    if model:
-        cfg["model"] = model
-    (Path(tmp) / "opencode.json").write_text(json.dumps(cfg), encoding="utf-8")
-    return ["run", FIXED_ASK], None
-
-
-def _hermes_build(system, user, schema, model, tmp, opts):
-    if not opts.get("allow_tools"):
-        raise EngineError(
-            "Hermes cannot run with its tools disabled, so it is off by default. "
-            "Set profiles.hermes.allow_tools to true to use it anyway.")
-    # Documented form: hermes -z "<instruction>" < context-file
-    args = ["-z", "Follow the instructions in the text on stdin. Answer with the JSON object only.",
-            "--ignore-rules", "--ignore-user-config"]
-    if model:
-        args += ["--model", model]
-    return args, _inline_prompt(system, user, schema)
-
-
-ENGINES = {
-    "claude": {
-        "label": "Claude",
-        "binaries": ["claude"],
-        "model": "claude-sonnet-5-5",
-        "model_label": "Sonnet 5.5",
-        "options": {"effort": "low"},
-        "build": _claude_build,
-        "parse": _claude_parse,
-    },
-    "kimi": {
-        "label": "Kimi",
-        "binaries": ["kimi"],
-        "model": "kimi-code/kimi-for-coding",
-        "model_label": "K2.8 Preview",
-        "options": {},
-        "build": _kimi_build,
-        "parse": _kimi_parse,
-    },
-    "pi": {
-        "label": "pi",
-        "binaries": ["pi"],
-        "model": "deepseek/deepseek-flash",
-        "model_label": "DS Flash",
-        "options": {"thinking": "low"},
-        "build": _pi_build,
-        "parse": _text_parse,
-    },
-    "codex": {
-        "label": "Codex",
-        "binaries": ["codex"],
-        "model": "gpt-6-luna",
-        "model_label": "GPT-6 Luna",
-        "options": {},
-        "build": _codex_build,
-        "parse": _text_parse,
-    },
-    "antigravity": {
-        "label": "Antigravity",
-        "binaries": ["agy", "antigravity"],
-        "model": "gemini-4-hydrogen-low",
-        "model_label": "Gemini 4 Hydrogen",
-        "options": {},
-        "build": _agy_build,
-        "parse": _agy_parse,
-    },
-    "opencode": {
-        "label": "OpenCode",
-        "binaries": ["opencode"],
-        "model": "",
-        "model_label": "default",
-        "options": {},
-        "build": _opencode_build,
-        "parse": _text_parse,
-    },
-    "hermes": {
-        "label": "Hermes",
-        "binaries": ["hermes"],
-        "model": "",
-        "model_label": "default",
-        "options": {},
-        "build": _hermes_build,
-        "parse": _text_parse,
-    },
-}
-
-# Preference order for backend "auto".
-AUTO_ORDER = ["pi", "claude", "codex", "antigravity", "kimi", "opencode", "hermes"]
+def active(config):
+    """Engines in use: the built-in ones plus the installed integrations."""
+    installed = config.get("integrations") or []
+    return list(CORE) + [e for e in OPTIONAL if e in installed]
 
 
 # ---------------------------------------------------------------- detection
@@ -324,8 +140,7 @@ def _cache_path():
 
 
 def _probe(engine_id):
-    spec = ENGINES[engine_id]
-    binary = find_binary(spec["binaries"])
+    binary = find_binary(spec(engine_id)["binaries"])
     if not binary:
         return {"installed": False}
     try:
@@ -340,27 +155,41 @@ def _probe(engine_id):
     return {"installed": True, "binary": binary, "version": first}
 
 
-def detect(refresh=False):
-    """{engine_id: {"installed": bool, "binary": str, "version": str}}, cached for CACHE_TTL."""
+def detect(engine_ids, refresh=False):
+    """{id: {"installed", "binary", "version"}} for the given engines.
+
+    A tool counts only if its binary answers --version (stale mise shims
+    fail). Results are cached per engine for CACHE_TTL.
+    """
     path = _cache_path()
-    if not refresh:
-        try:
-            cached = json.loads(path.read_text(encoding="utf-8"))
-            if (time.time() - cached.get("time", 0) < CACHE_TTL
-                    and set(cached.get("engines", {})) == set(ENGINES)
-                    and all(not e.get("installed") or os.access(e.get("binary", ""), os.X_OK)
-                            for e in cached["engines"].values())):
-                return cached["engines"]
-        except (OSError, ValueError, AttributeError):
-            pass
-    with ThreadPoolExecutor(max_workers=len(ENGINES)) as pool:
-        results = dict(zip(ENGINES, pool.map(_probe, ENGINES)))
+    cache = {}
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"time": time.time(), "engines": results}), encoding="utf-8")
-    except OSError:
-        pass
-    return results
+        cache = json.loads(path.read_text(encoding="utf-8")).get("engines", {})
+        if not isinstance(cache, dict):
+            cache = {}
+    except (OSError, ValueError, AttributeError):
+        cache = {}
+    now = time.time()
+    fresh, todo = {}, []
+    for eid in engine_ids:
+        entry = cache.get(eid)
+        ok = (not refresh and isinstance(entry, dict) and now - entry.get("time", 0) < CACHE_TTL
+              and (not entry.get("installed") or os.access(entry.get("binary", ""), os.X_OK)))
+        if ok:
+            fresh[eid] = entry
+        else:
+            todo.append(eid)
+    if todo:
+        with ThreadPoolExecutor(max_workers=len(todo)) as pool:
+            for eid, result in zip(todo, pool.map(_probe, todo)):
+                result["time"] = now
+                fresh[eid] = cache[eid] = result
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"engines": cache}), encoding="utf-8")
+        except OSError:
+            pass
+    return {eid: fresh[eid] for eid in engine_ids}
 
 
 # ---------------------------------------------------------------------- run
@@ -368,17 +197,15 @@ def detect(refresh=False):
 def run(engine_id, profile, system, user, schema, timeout):
     """Run one rewrite through a CLI engine; returns a dict or JSON-bearing text."""
     global CHILD
-    spec = ENGINES.get(engine_id)
-    if not spec:
-        raise EngineError(f"unknown engine {engine_id!r}")
-    binary = find_binary([profile["command"]] if profile.get("command") else spec["binaries"])
+    spec_ = spec(engine_id)
+    binary = find_binary([profile["command"]] if profile.get("command") else spec_["binaries"])
     if not binary:
-        raise EngineError(f"{spec['label']} is not installed")
-    model = profile.get("model", spec["model"])
-    opts = dict(spec.get("options", {}))
+        raise EngineError(f"{spec_['label']} is not installed")
+    model = profile.get("model", spec_["model"])
+    opts = dict(spec_.get("options", {}))
     opts.update({k: v for k, v in profile.items() if k in ("effort", "thinking", "allow_tools")})
     with tempfile.TemporaryDirectory(prefix="omarchy-prompt-") as tmp:
-        args, stdin_text = spec["build"](system, user, schema, model, tmp, opts)
+        args, stdin_text = spec_["build"](system, user, schema, model, tmp, opts)
         CHILD = subprocess.Popen([binary] + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, cwd=tmp, env=_child_env())
         try:
@@ -391,8 +218,8 @@ def run(engine_id, profile, system, user, schema, timeout):
             returncode, CHILD = CHILD.returncode, None
     if returncode != 0 and not stdout.strip():
         tail = (stderr or "").strip().splitlines()[-1:] or ["no output"]
-        raise EngineError(f"{spec['label']} exited {returncode}: {tail[0][:200]}")
+        raise EngineError(f"{spec_['label']} exited {returncode}: {tail[0][:200]}")
     try:
-        return spec["parse"](stdout)
+        return spec_["parse"](stdout)
     except ValueError as e:
-        raise EngineError(f"{spec['label']}: unreadable output") from e
+        raise EngineError(f"{spec_['label']}: unreadable output") from e

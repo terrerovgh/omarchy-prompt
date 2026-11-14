@@ -13,6 +13,9 @@ def _xdg(var, fallback):
 
 
 def config_dir():
+    override = os.environ.get("OMARCHY_PROMPT_CONFIG_DIR")
+    if override and os.path.isabs(override):
+        return Path(override)
     return _xdg("XDG_CONFIG_HOME", ".config") / "omarchy-prompt"
 
 

@@ -7,7 +7,9 @@
   promptctl.py improve --stdin              request as one JSON line on stdin (used by the overlay)
   promptctl.py copy                         {"text": ...} on stdin -> wl-copy
   promptctl.py models [--refresh]
-  promptctl.py engines [--refresh]          detected local AI CLIs + usable API profiles
+  promptctl.py engines [--refresh]          active local AI CLIs + usable API profiles
+  promptctl.py integration list             built-in engines and optional integrations
+  promptctl.py integration install|uninstall NAME
   promptctl.py history list [--q TEXT] [--category C] [--family F] [--fav] [--limit N]
   promptctl.py history get|delete|fav ID
   promptctl.py history stats
@@ -238,13 +240,65 @@ def cmd_models(args):
 
 def cmd_engines(args):
     cfg = config.load()
-    detected = engines.detect(args.refresh)
+    ids = engines.active(cfg)
+    detected = engines.detect(ids, args.refresh)
     emit({
         "ok": True,
         "backend": cfg.get("backend") or "auto",
         "available": backends.available(cfg),
-        "detected": {k: {"label": engines.ENGINES[k]["label"], **v} for k, v in detected.items()},
+        "detected": {k: {"label": engines.spec(k)["label"], **v} for k, v in detected.items()},
     })
+
+
+def _integration_rows(cfg, refresh=False):
+    installed = cfg.get("integrations") or []
+    probe = [e for e in engines.CATALOG if e in engines.CORE or e in installed]
+    detected = engines.detect(probe, refresh)
+    rows = []
+    for eid in engines.CATALOG:
+        mod = engines.module(eid)
+        if eid in engines.CORE:
+            state = "built-in"
+        else:
+            state = "installed" if eid in installed else "not installed"
+        info = detected.get(eid, {})
+        rows.append({"id": eid, "state": state, "description": mod.DESCRIPTION, "safety": mod.SAFETY,
+                     "cli": (info.get("version") or "found") if info.get("installed") else
+                            ("not found" if eid in detected else "not checked")})
+    return rows
+
+
+def cmd_integration(args):
+    cfg = config.load()
+    if args.action in ("list", "status"):
+        rows = _integration_rows(cfg, args.refresh)
+        if args.json:
+            emit({"ok": True, "integrations": rows})
+            return
+        for r in rows:
+            print(f"{r['id']:<12} {r['state']:<14} CLI: {r['cli']:<28} {r['description']}")
+        print("\nInstall an optional one with: promptctl.py integration install <name>")
+        return
+    name = args.name
+    if name not in engines.OPTIONAL:
+        fail(f"{name!r} is not an optional integration (choose from: {', '.join(engines.OPTIONAL)})")
+    current = list(config.load_user().get("integrations") or [])
+    if args.action == "install":
+        if name not in current:
+            current.append(name)
+        config.set_value("integrations", json.dumps(current))
+        info = engines.detect([name], refresh=True)[name]
+        note = f"CLI found: {info.get('version') or info.get('binary')}" if info.get("installed") else \
+            f"CLI not found; install {engines.spec(name)['binaries'][0]} to use it"
+        emit({"ok": True, "installed": name, "cli": bool(info.get("installed")), "note": note,
+              "safety": engines.module(name).SAFETY})
+    else:
+        if name in current:
+            current.remove(name)
+        config.set_value("integrations", json.dumps(current))
+        if (config.load_user().get("backend") or "") == name:
+            config.set_value("backend", "auto")
+        emit({"ok": True, "uninstalled": name})
 
 
 def cmd_history(args):
@@ -327,6 +381,13 @@ def parser():
     mod = sub.add_parser("models")
     mod.add_argument("--refresh", action="store_true", help="re-detect installed CLIs")
     mod.set_defaults(fn=cmd_models)
+
+    integ = sub.add_parser("integration", help="manage optional CLI integrations (like herdr integration)")
+    integ.add_argument("action", choices=["list", "status", "install", "uninstall"])
+    integ.add_argument("name", nargs="?")
+    integ.add_argument("--refresh", action="store_true")
+    integ.add_argument("--json", action="store_true")
+    integ.set_defaults(fn=cmd_integration)
 
     eng = sub.add_parser("engines")
     eng.add_argument("--refresh", action="store_true")

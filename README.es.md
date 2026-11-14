@@ -65,36 +65,47 @@ rm -rf ~/.config/omarchy-prompt ~/.local/share/omarchy-prompt ~/.cache/omarchy-p
 ## Dependencias
 
 - `python3` (solo la biblioteca estándar) y `wl-clipboard` (`wl-paste`, `wl-copy`). Omarchy trae los dos.
-- Al menos un motor de reescritura: una herramienta CLI de IA de la tabla de motores (pi, Claude Code, Codex, Antigravity, Kimi Code, OpenCode), o una clave de API para uno de los perfiles de API.
+- Al menos un motor de reescritura: Codex o Claude Code (integrados), una integración CLI opcional (pi, Kimi Code, Antigravity, OpenCode), o una clave de API para uno de los perfiles de API.
 - Conexión a internet. La traducción usa los endpoints sin clave de Google Translate, y la reescritura usa el proveedor del motor elegido. Con un motor local como Ollama, la reescritura no sale de tu equipo.
 
 ## Qué LLM hace la reescritura
 
-El que reescribe (el «motor») es independiente del modelo de destino. Se elige en el selector **Motor** de la tarjeta, que lista solo las herramientas CLI de IA que encuentra instaladas:
+El que reescribe (el «motor») es independiente del modelo de destino. Se elige en el selector **Motor** de la tarjeta.
 
-| Motor | CLI | Modelo por defecto | Cómo se desactivan las herramientas |
+**Motores integrados.** Vienen dos de serie y se detectan solos. **Auto** usa el primero que esté instalado:
+
+| Motor | CLI | Modelo | Cómo se desactivan las herramientas |
 |---|---|---|---|
-| pi | `pi` | DeepSeek Flash | `--no-tools --no-session --no-context-files` |
-| Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, sin MCP, sin settings, sin guardar sesión |
 | Codex | `codex exec` | GPT-6 Luna | `--sandbox read-only`, `--ephemeral` |
-| Antigravity | `agy` | Gemini 4 Hydrogen (`-low`) | En modo headless deniega las herramientas que piden aprobación (comandos, ediciones); nunca se pasa `--dangerously-skip-permissions`; sin slash commands |
-| Kimi | `kimi` (Kimi Code) | K2.8 Preview (`kimi-for-coding`) | Agente propio con `tools: []` |
-| OpenCode | `opencode run` | El que tenga configurado | Agente temporal con permisos que lo deniegan todo |
-| Hermes | `hermes -z` | El que tenga configurado | **Desactivado por defecto:** Hermes no permite desactivar sus herramientas. Se habilita con `profiles.hermes.allow_tools: true` |
+| Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, sin MCP, sin settings, sin guardar sesión |
 
-El motor por defecto es **pi**. **Auto** usa la primera herramienta instalada en el orden de la tabla, y pi va primero. Elegir otro motor en la tarjeta vale solo para esa vez; para cambiar el predeterminado: `./promptctl.py config set backend claude`.
-
-Una herramienta cuenta como instalada solo si responde a `--version`, así que los shims viejos de mise no aparecen. La detección se guarda en caché 6 horas; `./promptctl.py engines --refresh` la repite. Cada ejecución corre en un directorio temporal vacío.
-
-Claude, Codex, Antigravity, Kimi y pi se probaron de verdad, incluida una comprobación de que una selección que le pide al motor ejecutar `touch` no consigue crear el archivo. Los adaptadores de OpenCode y Hermes siguen su documentación oficial, pero no se han ejecutado.
-
-Los perfiles de API (`anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api`, `openrouter`) aparecen en el selector cuando existe su archivo de clave en `~/.config/omarchy-prompt/keys/<nombre>` con permisos 600. Los locales (`ollama`, `s24-llama`) aparecen cuando pones `"enabled": true`.
-
-Para cambiar un modelo, edita `~/.config/omarchy-prompt/config.json`:
+**Integraciones opcionales.** Las demás CLIs de IA son integraciones opcionales, al estilo de las integraciones de herdr. Su código no se carga y su CLI no se busca hasta que instalas la integración:
 
 ```bash
-./promptctl.py config set profiles.claude.model claude-haiku-5-5
-./promptctl.py config set profiles.kimi.model kimi-code/kimi-for-coding-highspeed
+./promptctl.py integration list              # motores integrados, integraciones y si se encuentra cada CLI
+./promptctl.py integration install pi
+./promptctl.py integration uninstall pi
+```
+
+| Integración | CLI | Modelo | Cómo se desactivan las herramientas |
+|---|---|---|---|
+| `pi` | `pi` | El configurado en pi | `--no-tools --no-session --no-context-files --no-mcp` |
+| `kimi` | `kimi` (Kimi Code) | El `default_model` de Kimi Code | Agente propio con `tools: []` |
+| `antigravity` | `agy` | El modelo por defecto de agy | En modo headless deniega las herramientas que piden aprobación; nunca se pasa `--dangerously-skip-permissions`; sin slash commands |
+| `opencode` | `opencode run` | El modelo por defecto de OpenCode | Agente temporal con permisos que lo deniegan todo (adaptador sin ejecutar todavía) |
+| `hermes` | `hermes -z` | El modelo por defecto de Hermes | No permite desactivar sus herramientas, así que queda bloqueado hasta que pongas `profiles.hermes.allow_tools: true` (adaptador sin ejecutar todavía) |
+
+Una herramienta cuenta como instalada solo si responde a `--version`, así que los shims viejos no aparecen. La detección se guarda en caché 6 horas; añade `--refresh` para repetirla. Cada ejecución corre en un directorio temporal privado y vacío. Codex, Claude, pi, Kimi y Antigravity se probaron de verdad, incluida una comprobación de que una selección que pide ejecutar `touch` no consigue crear el archivo.
+
+**Perfiles de API.** `anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api` y `openrouter` aparecen en el selector cuando existe su archivo de clave en `~/.config/omarchy-prompt/keys/<nombre>` con permisos 600. Los locales (`ollama`, `s24-llama`) aparecen cuando pones `"enabled": true`.
+
+**Tu propio motor por defecto.** El motor por defecto y los modelos son configuración personal, en `~/.config/omarchy-prompt/config.json`. Elegir un motor en la tarjeta vale solo para esa vez. Por ejemplo, para usar pi con DeepSeek Flash por defecto:
+
+```bash
+./promptctl.py integration install pi
+./promptctl.py config set backend pi
+./promptctl.py config set profiles.pi.model deepseek/deepseek-flash
+./promptctl.py config set profiles.pi.model_label "DeepSeek 4.1 Flash"   # etiqueta del selector
 ```
 
 Si el modelo escribe el prompt mejorado en otro idioma que no sea el inglés, el plugin lo detecta y se lo vuelve a pedir una vez.

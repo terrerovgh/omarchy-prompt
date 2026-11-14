@@ -65,37 +65,47 @@ rm -rf ~/.config/omarchy-prompt ~/.local/share/omarchy-prompt ~/.cache/omarchy-p
 ## Dependencies
 
 - `python3` (standard library only) and `wl-clipboard` (`wl-paste`, `wl-copy`). Omarchy ships both.
-- At least one rewriter: an AI CLI from the engine table below (pi, Claude Code, Codex, Antigravity, Kimi Code, OpenCode), or an API key for one of the API profiles.
+- At least one rewriter: Codex or Claude Code (built in), an optional CLI integration (pi, Kimi Code, Antigravity, OpenCode), or an API key for one of the API profiles.
 - An internet connection. Translation uses Google Translate's keyless endpoints, and rewriting uses the provider behind the chosen engine. A local engine such as Ollama keeps the rewrite on your machine.
 
 ## Which LLM does the rewriting
 
-The rewriter (the "engine") is a separate choice from the target model. Pick it in the card's **Engine** selector. The card lists the AI command-line tools it finds installed, and only those:
+The rewriter (the "engine") is a separate choice from the target model. Pick it in the card's **Engine** selector.
 
-| Engine | CLI | Default model | How tools are kept off |
+**Built-in engines.** Two engines come built in and are detected automatically. **Auto** uses the first one that is installed:
+
+| Engine | CLI | Model | How tools are kept off |
 |---|---|---|---|
-| pi | `pi` | DeepSeek Flash | `--no-tools --no-session --no-context-files` |
-| Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, no MCP, no settings, no saved session |
 | Codex | `codex exec` | GPT-6 Luna | `--sandbox read-only`, `--ephemeral` |
-| Antigravity | `agy` | Gemini 4 Hydrogen (`-low`) | Headless mode auto-denies tools that need approval (shell, edits); `--dangerously-skip-permissions` is never passed; slash commands off |
-| Kimi | `kimi` (Kimi Code) | K2.8 Preview (`kimi-for-coding`) | Custom agent file with `tools: []` |
-| OpenCode | `opencode run` | Its configured default | Temporary agent whose permissions deny everything |
-| Hermes | `hermes -z` | Its configured default | **Off by default:** Hermes cannot disable its tools. Opt in with `profiles.hermes.allow_tools: true` |
+| Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, no MCP, no settings, no saved session |
 
-The default engine is **pi**. **Auto** uses the first installed tool in the order above, and pi comes first. Picking another engine in the card applies to that card only; to change the default, run `./promptctl.py config set backend claude`.
-
-A tool counts as installed only when it answers `--version`, so leftover mise shims are ignored. Detection is cached for 6 hours; `./promptctl.py engines --refresh` re-checks. Every run happens in an empty temporary directory.
-
-Claude, Codex, Antigravity, Kimi and pi were tested for real, including a check that a selection asking the engine to run `touch` cannot create the file. The OpenCode and Hermes adapters follow their official docs but have not been run.
-
-API profiles (`anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api`, `openrouter`) appear in the selector once their key file exists in `~/.config/omarchy-prompt/keys/<name>` with mode 600. The local `ollama` and `s24-llama` profiles appear once you set `"enabled": true`.
-
-To change a model, edit `~/.config/omarchy-prompt/config.json`:
+**Optional integrations.** Other AI CLIs are optional integrations, the way herdr handles its agent integrations. Their code is not loaded and their CLI is not probed until you install the integration:
 
 ```bash
-./promptctl.py config set profiles.claude.model claude-haiku-5-5
-./promptctl.py config set profiles.kimi.model kimi-code/kimi-for-coding-highspeed
-./promptctl.py config set profiles.antigravity.model gemini-4-hydrogen-medium
+./promptctl.py integration list              # built-in engines, integrations, and whether each CLI is found
+./promptctl.py integration install pi
+./promptctl.py integration uninstall pi
+```
+
+| Integration | CLI | Model | How tools are kept off |
+|---|---|---|---|
+| `pi` | `pi` | pi's configured model | `--no-tools --no-session --no-context-files --no-mcp` |
+| `kimi` | `kimi` (Kimi Code) | Kimi Code's `default_model` | Custom agent file with `tools: []` |
+| `antigravity` | `agy` | agy's default model | Headless mode auto-denies tools that need approval; `--dangerously-skip-permissions` is never passed; slash commands off |
+| `opencode` | `opencode run` | OpenCode's default model | Temporary agent whose permissions deny everything (adapter not run yet) |
+| `hermes` | `hermes -z` | Hermes's default model | Cannot disable its tools, so it stays blocked until you set `profiles.hermes.allow_tools: true` (adapter not run yet) |
+
+A tool counts as installed only when it answers `--version`, so leftover shims are ignored. Detection is cached for 6 hours; add `--refresh` to re-check. Every run happens in an empty private temporary directory. Codex, Claude, pi, Kimi and Antigravity were tested for real, including a check that a selection asking the engine to run `touch` cannot create the file.
+
+**API profiles.** `anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api` and `openrouter` appear in the selector once their key file exists in `~/.config/omarchy-prompt/keys/<name>` with mode 600. The local `ollama` and `s24-llama` profiles appear once you set `"enabled": true`.
+
+**Your own default.** The default and the models are personal settings in `~/.config/omarchy-prompt/config.json`. Picking an engine in the card applies to that card only. For example, to make pi with DeepSeek Flash your default:
+
+```bash
+./promptctl.py integration install pi
+./promptctl.py config set backend pi
+./promptctl.py config set profiles.pi.model deepseek/deepseek-flash
+./promptctl.py config set profiles.pi.model_label "DeepSeek 4.1 Flash"   # label shown in the selector
 ```
 
 If the model writes the improved prompt in a language other than English, the plugin notices and asks once more.
@@ -136,7 +146,8 @@ echo "escribe un email anunciando una subida de precios" | ./promptctl.py improv
 | `guides/*.md` | Prompting guides distilled from official docs |
 | `tools/refresh-guides.py` | Re-fetches the sources and drafts updated guides |
 | `bin/omarchy-prompt-selection` | Reads the selection and opens the plugin |
-| `promptkit/engines.py` | Detects the local AI CLIs and runs them with tools off |
+| `promptkit/engines.py` | Engine registry, CLI detection, and the runner (tools off, private temp dir) |
+| `promptkit/integrations/` | One adapter per CLI: built-in `codex`, `claude`; optional `pi`, `kimi`, `antigravity`, `opencode`, `hermes` |
 | `tests/` | Offline tests: `python3 -m unittest discover -s tests` |
 
 ## Privacy and security

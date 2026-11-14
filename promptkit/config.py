@@ -9,15 +9,20 @@ import os
 from . import paths
 
 DEFAULTS = {
-    # "auto" = the first installed CLI in engines.AUTO_ORDER; or a profile name.
+    # "auto" = the first installed built-in CLI (Codex, then Claude Code),
+    # then installed integrations; or a profile name.
     "backend": "auto",
+    # Optional CLI integrations the user installed (promptctl.py integration install <name>).
+    "integrations": [],
     "ui_lang": "es",
     "last_target": "",
     "timeout": 90,
     "profiles": {
-        # Local CLI harnesses (detected automatically). Override "model" here.
-        "claude": {"type": "cli", "engine": "claude"},
+        # Built-in CLI engines (detected automatically). Override "model" /
+        # "model_label" here. Optional integrations take a profile of the
+        # same shape once installed.
         "codex": {"type": "cli", "engine": "codex"},
+        "claude": {"type": "cli", "engine": "claude"},
         "antigravity": {"type": "cli", "engine": "antigravity"},
         "kimi": {"type": "cli", "engine": "kimi"},
         "pi": {"type": "cli", "engine": "pi"},
@@ -101,6 +106,10 @@ def _migrate(user):
                 profiles.setdefault(old + "-api", prof)
     if user.get("backend") == "claude-cli":
         user["backend"] = "auto"
+    # 1.1 had every CLI active; keep a chosen optional one working.
+    optional = ("pi", "kimi", "antigravity", "opencode", "hermes")
+    if "integrations" not in user and user.get("backend") in optional:
+        user["integrations"] = [user["backend"]]
     return user
 
 
@@ -126,6 +135,11 @@ def _read_user():
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def load_user():
+    """The user's own file only (migrated), without defaults merged in."""
+    return _migrate(_read_user())
 
 
 def save_user(data):
