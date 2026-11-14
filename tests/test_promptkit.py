@@ -235,6 +235,7 @@ class EngineTests(unittest.TestCase):
         agent = log["files"]["prompt-rewriter.md"]
         self.assertIn("\ntools: []\n", agent)
         self.assertIn("SYS", agent)
+        self.assertIn("USER TEXT", agent)
         self.assertEqual(log["argv"][log["argv"].index("-m") + 1], "kimi-code/kimi-for-coding")
 
     def test_pi_no_tools_no_session(self):
@@ -253,11 +254,11 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(log["stdin"].startswith("SYS"))
 
     def test_antigravity_never_skips_permissions(self):
-        out, log = self.run_engine("antigravity", json.dumps({"status": "SUCCESS", "response": "x", "structured_output": GOOD}))
+        out, log = self.run_engine("antigravity", json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "x", "structured_output": GOOD}}))
         self.assertEqual(out, GOOD)
         self.assertIn("--disable-slash-commands", log["argv"])
         with self.assertRaises(engines.EngineError):
-            self.run_engine("antigravity", json.dumps({"status": "SUCCESS", "response": "", "denied_actions": [{"action": "command"}]}))
+            self.run_engine("antigravity", json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "", "denied_actions": [{"action": "command"}]}}))
         self.assertFalse(any("dangerously" in a for a in log["argv"]))
         self.assertEqual(log["argv"][log["argv"].index("--model") + 1], "gemini-4-hydrogen-low")
 
@@ -272,6 +273,21 @@ class EngineTests(unittest.TestCase):
             self.run_engine("hermes", "x")
         out, _ = self.run_engine("hermes", json.dumps(GOOD), {"allow_tools": True})
         self.assertEqual(backends.extract_json(out), GOOD)
+
+    def test_selected_text_never_in_argv(self):
+        replies = {
+            "claude": json.dumps({"is_error": False, "structured_output": GOOD}),
+            "kimi": json.dumps({"role": "assistant", "content": json.dumps(GOOD)}),
+            "pi": json.dumps(GOOD),
+            "codex": json.dumps(GOOD),
+            "antigravity": json.dumps({"event": "result", "result": {"status": "SUCCESS", "structured_output": GOOD}}),
+            "opencode": json.dumps(GOOD),
+            "hermes": json.dumps(GOOD),
+        }
+        for engine, reply in replies.items():
+            with self.subTest(engine=engine):
+                _, log = self.run_engine(engine, reply, {"allow_tools": True})
+                self.assertFalse(any("USER TEXT" in a for a in log["argv"]), engine)
 
     def test_detection_rejects_stale_shims(self):
         with tempfile.TemporaryDirectory() as tmp:

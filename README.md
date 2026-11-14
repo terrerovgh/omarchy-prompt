@@ -49,6 +49,25 @@ o.bind("SUPER + ALT + P", "Improve selected prompt", os.getenv("HOME") .. "/.loc
 
 Then check it with `hyprctl reload && hyprctl configerrors`.
 
+## Uninstall
+
+```bash
+omarchy plugin remove io.github.terrerovgh.prompt-improver
+rm -f ~/.local/bin/omarchy-prompt-selection
+```
+
+Then delete the `o.bind("SUPER + ALT + P", ...)` line from `~/.config/hypr/bindings.lua`. The plugin keeps its settings and history outside the plugin folder. Remove them too if you want a clean slate:
+
+```bash
+rm -rf ~/.config/omarchy-prompt ~/.local/share/omarchy-prompt ~/.cache/omarchy-prompt
+```
+
+## Dependencies
+
+- `python3` (standard library only) and `wl-clipboard` (`wl-paste`, `wl-copy`). Omarchy ships both.
+- At least one rewriter: an AI CLI from the engine table below (pi, Claude Code, Codex, Antigravity, Kimi Code, OpenCode), or an API key for one of the API profiles.
+- An internet connection. Translation uses Google Translate's keyless endpoints, and rewriting uses the provider behind the chosen engine. A local engine such as Ollama keeps the rewrite on your machine.
+
 ## Which LLM does the rewriting
 
 The rewriter (the "engine") is a separate choice from the target model. Pick it in the card's **Engine** selector. The card lists the AI command-line tools it finds installed, and only those:
@@ -125,7 +144,7 @@ echo "escribe un email anunciando una subida de precios" | ./promptctl.py improv
 - **Translation:** the selected text is sent to Google Translate's keyless endpoints, just like omarchy-translate.
 - **Rewriting:** the selected text is sent to the configured backend: Anthropic through Claude Code or the API, or whichever provider or local server you configure.
 - **History:** stored locally in `~/.local/share/omarchy-prompt/history.sqlite3`.
-- **No shell:** the selection is passed as a process argument and never runs through a shell. Every CLI engine runs with its tools off (see the engine table), in an empty temporary directory. Kimi Code still records a session per run, because it has no option to skip that.
+- **Never in a command line:** the launcher does not read the selection. The plugin reads it with `wl-paste` through a pipe, and passes text to `promptctl.py`, the engines and `wl-copy` only through stdin or files in a private temporary directory (mode 700). Other local accounts cannot see it in `/proc/*/cmdline`, and it never runs through a shell. Every CLI engine runs with its tools off (see the engine table), in an empty temporary directory. Kimi Code still records a session per run, because it has no option to skip that.
 - **Prompt injection:** the selected text is wrapped in tags and marked as material to rewrite, not instructions. Model output is validated against a JSON schema and always shown as plain text.
 - **Limits:** input is capped at 20 000 characters and HTTP responses at 1 MB. The default timeout is 90 s.
 

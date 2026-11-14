@@ -79,6 +79,13 @@ def _child_env():
     return env
 
 
+# Fixed instruction for CLIs that need a prompt argument; the material itself
+# goes through stdin or a file in the private temp dir, never through argv,
+# where other local accounts could read it from /proc.
+FIXED_ASK = ("Rewrite the prompt given in <original_prompt> in your instructions, following them. "
+             "Answer with the JSON object only.")
+
+
 def _schema_hint(schema):
     return "Respond with only a single JSON object matching this JSON Schema, with no other text:\n" + json.dumps(schema)
 
@@ -118,12 +125,13 @@ def _claude_parse(stdout):
 def _kimi_build(system, user, schema, model, tmp, opts):
     # A custom agent with an empty tool list: it can only answer in text.
     agent = Path(tmp) / "prompt-rewriter.md"
+    # kimi has no stdin prompt, so the material rides in the agent file.
     agent.write_text(
         "---\nname: prompt-rewriter\ndescription: Rewrites prompts for a target model. Has no tools.\n"
-        "tools: []\n---\n" + system + "\n\n" + _schema_hint(schema) + "\n",
+        "tools: []\n---\n" + system + "\n\n" + _schema_hint(schema) + "\n\n" + user + "\n",
         encoding="utf-8",
     )
-    args = ["--agent-file", str(agent), "--output-format", "stream-json", "-p", user]
+    args = ["--agent-file", str(agent), "--output-format", "stream-json", "-p", FIXED_ASK]
     if model:
         args = ["-m", model] + args
     return args, None
@@ -181,15 +189,28 @@ def _agy_build(system, user, schema, model, tmp, opts):
     # edits; reported in "denied_actions") unless --dangerously-skip-permissions
     # is given, which we never pass. Slash commands are off so a selection that
     # starts with "/" is not expanded into a skill.
-    args = ["-p", _inline_prompt(system, user, schema), "--output-format", "json",
+    # The prompt goes in as one stream-json event on stdin.
+    args = ["--input-format", "stream-json", "--output-format", "stream-json",
             "--disable-slash-commands", "--json-schema", json.dumps(schema)]
     if model:
         args += ["--model", model]
-    return args, None
+    event = {"event": "user", "message": {"content": _inline_prompt(system, user, schema)}}
+    return args + ["--print="], json.dumps(event) + "\n"
 
 
 def _agy_parse(stdout):
-    data = json.loads(stdout)
+    data = None
+    for line in stdout.splitlines():
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(msg, dict) and msg.get("event") == "result" and isinstance(msg.get("result"), dict):
+            data = msg["result"]
+        elif isinstance(msg, dict) and "status" in msg and data is None:
+            data = msg  # plain --output-format json
+    if data is None:
+        raise EngineError("antigravity returned no result")
     if data.get("status") not in (None, "SUCCESS"):
         raise EngineError(f"antigravity: {str(data.get('error') or data.get('status'))[:200]}")
     if isinstance(data.get("structured_output"), dict):
@@ -202,13 +223,13 @@ def _agy_parse(stdout):
 def _opencode_build(system, user, schema, model, tmp, opts):
     # Project config in the empty temp dir: a primary agent whose system prompt
     # is ours and whose permissions deny every action (shell, edit, read, web...).
-    agent = {"mode": "primary", "system": system + "\n\n" + _schema_hint(schema),
+    agent = {"mode": "primary", "system": system + "\n\n" + _schema_hint(schema) + "\n\n" + user,
              "permissions": [{"action": "*", "resource": "*", "effect": "deny"}]}
     cfg = {"$schema": "https://opencode.ai/config.json", "default_agent": "rewriter", "agents": {"rewriter": agent}}
     if model:
         cfg["model"] = model
     (Path(tmp) / "opencode.json").write_text(json.dumps(cfg), encoding="utf-8")
-    return ["run", user], None
+    return ["run", FIXED_ASK], None
 
 
 def _hermes_build(system, user, schema, model, tmp, opts):
@@ -216,10 +237,12 @@ def _hermes_build(system, user, schema, model, tmp, opts):
         raise EngineError(
             "Hermes cannot run with its tools disabled, so it is off by default. "
             "Set profiles.hermes.allow_tools to true to use it anyway.")
-    args = ["-z", _inline_prompt(system, user, schema), "--ignore-rules", "--ignore-user-config"]
+    # Documented form: hermes -z "<instruction>" < context-file
+    args = ["-z", "Follow the instructions in the text on stdin. Answer with the JSON object only.",
+            "--ignore-rules", "--ignore-user-config"]
     if model:
         args += ["--model", model]
-    return args, None
+    return args, _inline_prompt(system, user, schema)
 
 
 ENGINES = {

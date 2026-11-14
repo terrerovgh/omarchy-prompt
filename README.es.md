@@ -49,6 +49,25 @@ o.bind("SUPER + ALT + P", "Mejorar prompt seleccionado", os.getenv("HOME") .. "/
 
 Después compruébalo con `hyprctl reload && hyprctl configerrors`.
 
+## Desinstalación
+
+```bash
+omarchy plugin remove io.github.terrerovgh.prompt-improver
+rm -f ~/.local/bin/omarchy-prompt-selection
+```
+
+Después borra la línea `o.bind("SUPER + ALT + P", ...)` de `~/.config/hypr/bindings.lua`. El plugin guarda su configuración y su historial fuera de su carpeta. Si quieres eliminarlos también:
+
+```bash
+rm -rf ~/.config/omarchy-prompt ~/.local/share/omarchy-prompt ~/.cache/omarchy-prompt
+```
+
+## Dependencias
+
+- `python3` (solo la biblioteca estándar) y `wl-clipboard` (`wl-paste`, `wl-copy`). Omarchy trae los dos.
+- Al menos un motor de reescritura: una herramienta CLI de IA de la tabla de motores (pi, Claude Code, Codex, Antigravity, Kimi Code, OpenCode), o una clave de API para uno de los perfiles de API.
+- Conexión a internet. La traducción usa los endpoints sin clave de Google Translate, y la reescritura usa el proveedor del motor elegido. Con un motor local como Ollama, la reescritura no sale de tu equipo.
+
 ## Qué LLM hace la reescritura
 
 El que reescribe (el «motor») es independiente del modelo de destino. Se elige en el selector **Motor** de la tarjeta, que lista solo las herramientas CLI de IA que encuentra instaladas:
@@ -95,7 +114,7 @@ Para añadir una versión de modelo, edita `models.json`. Para añadir una famil
 - **Traducción:** el texto se envía a Google Translate, igual que en omarchy-translate.
 - **Reescritura:** el texto se envía al backend que hayas configurado.
 - **Historial:** se guarda solo en local, en `~/.local/share/omarchy-prompt/history.sqlite3`.
-- **Sin shell:** la selección nunca pasa por un shell. Cada motor CLI corre con sus herramientas desactivadas (ver la tabla de motores), en un directorio temporal vacío. Kimi Code guarda igualmente una sesión por ejecución, porque no tiene opción para evitarlo.
+- **Nunca en una línea de comandos:** el launcher no lee la selección. La lee el plugin con `wl-paste` a través de un pipe, y el texto llega a `promptctl.py`, a los motores y a `wl-copy` solo por stdin o por archivos en un directorio temporal privado (modo 700). Otras cuentas locales no pueden verlo en `/proc/*/cmdline`, y nunca pasa por un shell. Cada motor CLI corre con sus herramientas desactivadas (ver la tabla de motores), en un directorio temporal vacío. Kimi Code guarda igualmente una sesión por ejecución, porque no tiene opción para evitarlo.
 - **Inyección de prompts:** el texto seleccionado se trata como material a reescribir, nunca como instrucciones. La respuesta del modelo se valida con un esquema JSON y siempre se muestra como texto plano.
 
 ## Licencia

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.terrerovgh.prompt-improver",
   "name": "Prompt Improver",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "terrerovgh",
   "license": "MIT",
   "description": "Rewrite the selected prompt for a chosen LLM (Claude, GPT, Gemini, Kimi, DeepSeek, Qwen, Meta, Grok) following each vendor's official prompting guide; translates to English, detects the prompt's context and keeps an organized history.",

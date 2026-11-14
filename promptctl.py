@@ -4,6 +4,8 @@
   promptctl.py improve --target claude/opus-5.5 [--context auto|CATEGORY]
                        [--text TEXT | stdin] [--english TEXT --source LANG]
                        [--backend PROFILE] [--ui-lang es] [--no-save]
+  promptctl.py improve --stdin              request as one JSON line on stdin (used by the overlay)
+  promptctl.py copy                         {"text": ...} on stdin -> wl-copy
   promptctl.py models [--refresh]
   promptctl.py engines [--refresh]          detected local AI CLIs + usable API profiles
   promptctl.py history list [--q TEXT] [--category C] [--family F] [--fav] [--limit N]
@@ -17,6 +19,7 @@ import argparse
 import json
 import os
 import signal
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -39,8 +42,54 @@ def fail(message, code=1):
 
 # ------------------------------------------------------------------ improve
 
+def read_request():
+    """One JSON object on the first stdin line (how the overlay talks to us).
+
+    Text never travels in process arguments, where other local accounts
+    could read it from /proc.
+    """
+    line = sys.stdin.readline(4 * MAX_INPUT * 4)
+    try:
+        req = json.loads(line or "{}")
+    except ValueError:
+        fail("invalid request")
+    return req if isinstance(req, dict) else {}
+
+
+def read_selection():
+    """Primary selection, falling back to the clipboard, read through a pipe."""
+    for cmd in (["wl-paste", "--primary", "--no-newline"], ["wl-paste", "--no-newline", "--type", "text"]):
+        try:
+            out = subprocess.run(cmd, capture_output=True, timeout=3).stdout.decode("utf-8", "replace")
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if out.strip():
+            return out
+    return ""
+
+
+def apply_request(args, req):
+    """Fill args from a --stdin request; string fields only."""
+    def field(name):
+        value = req.get(name)
+        return value if isinstance(value, str) else None
+    if req.get("source") == "selection":
+        args.text = read_selection()[:MAX_INPUT]
+        emit({"stage": "input", "text": args.text.strip()})
+    elif field("text") is not None:
+        args.text = field("text")
+    for name, attr in (("english", "english"), ("source_lang", "source"), ("target", "target"),
+                       ("context", "context"), ("backend", "backend"), ("ui_lang", "ui_lang")):
+        if field(name) is not None:
+            setattr(args, attr, field(name))
+
+
 def cmd_improve(args):
-    text = args.text if args.text is not None else sys.stdin.read()
+    if args.stdin:
+        apply_request(args, read_request())
+        text = args.text or ""
+    else:
+        text = args.text if args.text is not None else sys.stdin.read()
     text = (text or "").strip()
     if not text:
         fail("empty text")
@@ -159,6 +208,19 @@ def cmd_improve(args):
 
 # ------------------------------------------------------------------- others
 
+def cmd_copy(_args):
+    """Copy {"text": ...} from stdin to the clipboard through wl-copy's stdin."""
+    req = read_request()
+    text = req.get("text") if isinstance(req.get("text"), str) else ""
+    if not text:
+        fail("empty text")
+    try:
+        subprocess.run(["wl-copy"], input=text.encode("utf-8"), timeout=5, check=True)
+    except (OSError, subprocess.SubprocessError) as e:
+        fail(f"wl-copy: {e}")
+    emit({"ok": True})
+
+
 def cmd_models(args):
     cfg = config.load()
     data = catalog.public()
@@ -256,7 +318,11 @@ def parser():
     imp.add_argument("--backend")
     imp.add_argument("--ui-lang")
     imp.add_argument("--no-save", action="store_true")
+    imp.add_argument("--stdin", action="store_true",
+                     help='read a JSON request line from stdin: {"text"|"source":"selection", "target", ...}')
     imp.set_defaults(fn=cmd_improve)
+
+    sub.add_parser("copy", help='copy {"text": ...} from stdin to the clipboard').set_defaults(fn=cmd_copy)
 
     mod = sub.add_parser("models")
     mod.add_argument("--refresh", action="store_true", help="re-detect installed CLIs")

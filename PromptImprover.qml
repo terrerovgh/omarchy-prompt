@@ -47,7 +47,7 @@ Item {
   property int entryId: -1
   property bool favorite: false
   property string errorText: ""
-  property var pendingArgs: null            // a run waiting for the current one to stop
+  property var pendingRequest: null         // a run waiting for the current one to stop
 
   // History view
   property var historyItems: []
@@ -137,8 +137,11 @@ Item {
       return
     }
     root.view = "improve"
+    // The launcher sends {"source": "selection"}: promptctl reads the selection
+    // itself through wl-paste, so the text never sits in a process argument.
+    var fromSelection = payload.source === "selection"
     var text = typeof payload.text === "string" ? payload.text.trim().slice(0, root.maxChars) : ""
-    if (!text) {
+    if (!fromSelection && !text) {
       // Opened without a selection: keep the last result if there is one.
       if (root.phase === "done" || root.phase === "loading") return
       root.original = ""
@@ -149,7 +152,7 @@ Item {
     root.original = text
     root.english = ""
     root.sourceLang = ""
-    root.runImprove(false)
+    root.runImprove(false, fromSelection)
   }
 
   function close() { root.opened = false }
@@ -174,13 +177,19 @@ Item {
 
   // ------------------------------------------------------------ improve
 
-  function runImprove(reuseEnglish) {
-    if (!root.original) return
-    var args = ["improve", "--ui-lang", strings.language || "en", "--text", root.original]
-    if (root.family && root.version) args = args.concat(["--target", root.family + "/" + root.version])
-    if (root.context !== "auto") args = args.concat(["--context", root.context])
-    if (root.backend) args = args.concat(["--backend", root.backend])
-    if (reuseEnglish && root.sourceLang) args = args.concat(["--source", root.sourceLang, "--english", root.english || root.original])
+  // The request (with the text) goes to promptctl on stdin, never in argv.
+  function runImprove(reuseEnglish, fromSelection) {
+    if (!root.original && !fromSelection) return
+    var req = { ui_lang: strings.language || "en" }
+    if (fromSelection) req.source = "selection"
+    else req.text = root.original
+    if (root.family && root.version) req.target = root.family + "/" + root.version
+    if (root.context !== "auto") req.context = root.context
+    if (root.backend) req.backend = root.backend
+    if (reuseEnglish && root.sourceLang) {
+      req.source_lang = root.sourceLang
+      req.english = root.english || root.original
+    }
 
     root.phase = "loading"
     root.stage = reuseEnglish && root.sourceLang
@@ -196,26 +205,27 @@ Item {
 
     if (improveProcess.running) {
       // Stop the outdated run; onExited starts this one.
-      root.pendingArgs = args
+      root.pendingRequest = req
       improveProcess.running = false
       return
     }
-    root.launch(args)
+    root.launch(req)
   }
 
-  function launch(args) {
-    improveProcess.command = root.ctl(args)
+  function launch(req) {
+    improveProcess.request = req
     improveProcess.running = true
   }
 
   function handleLine(line) {
-    if (root.pendingArgs !== null) return
+    if (root.pendingRequest !== null) return
     var msg = null
     try { msg = JSON.parse(String(line || "").trim()) } catch (e) { return }
     if (!msg || typeof msg !== "object") return
 
     if (typeof msg.stage === "string") {
-      if (msg.stage === "translating") root.stage = strings.t("translating")
+      if (msg.stage === "input") root.original = typeof msg.text === "string" ? msg.text.slice(0, root.maxChars) : ""
+      else if (msg.stage === "translating") root.stage = strings.t("translating")
       else if (msg.stage === "translated") {
         root.sourceLang = String(msg.source || "").slice(0, 16)
         root.english = typeof msg.english === "string" ? msg.english : ""
@@ -237,14 +247,15 @@ Item {
       root.phase = "done"
     } else if (msg.ok === false) {
       root.errorText = typeof msg.error === "string" ? msg.error.slice(0, 300) : "?"
-      root.phase = "error"
+      root.phase = root.errorText === "empty text" ? "empty" : "error"
     }
   }
 
   function copyText(text) {
     if (!text) return
-    Quickshell.execDetached(["wl-copy", "--", text])
-    Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-notification-send", "-t", "2000", strings.t("copied")])
+    // Through promptctl's stdin to wl-copy's stdin: never a process argument.
+    copyProcess.request = { text: text }
+    if (!copyProcess.running) copyProcess.running = true
     root.dismiss()
   }
 
@@ -291,7 +302,7 @@ Item {
   }
 
   function loadEntry(item) {
-    if (improveProcess.running) { root.pendingArgs = null; improveProcess.running = false }
+    if (improveProcess.running) { root.pendingRequest = null; improveProcess.running = false }
     root.original = String(item.original || "")
     root.english = String(item.english || "")
     root.sourceLang = String(item.source_lang || "")
@@ -372,16 +383,23 @@ Item {
 
   Process {
     id: improveProcess
+    property var request: null
+    command: root.ctl(["improve", "--stdin"])
     running: false
+    stdinEnabled: true
+    onStarted: {
+      write(JSON.stringify(request || {}) + "\n")
+      request = null
+    }
     stdout: SplitParser { onRead: data => root.handleLine(data) }
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: if (text.trim() !== "") console.warn(root.pluginId, text.trim().slice(0, 500))
     }
     onExited: function(exitCode, exitStatus) {
-      if (root.pendingArgs !== null) {
-        var next = root.pendingArgs
-        root.pendingArgs = null
+      if (root.pendingRequest !== null) {
+        var next = root.pendingRequest
+        root.pendingRequest = null
         root.launch(next)
         return
       }
@@ -389,6 +407,22 @@ Item {
         root.errorText = "exit " + exitCode
         root.phase = "error"
       }
+    }
+  }
+
+  Process {
+    id: copyProcess
+    property var request: null
+    command: root.ctl(["copy"])
+    running: false
+    stdinEnabled: true
+    onStarted: {
+      write(JSON.stringify(request || {}) + "\n")
+      request = null
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0)
+        Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-notification-send", "-t", "2000", strings.t("copied")])
     }
   }
 
