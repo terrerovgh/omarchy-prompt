@@ -4,6 +4,8 @@
 
 Plugin del shell de [Omarchy](https://omarchy.org/) que reescribe el prompt que tengas seleccionado para que funcione mejor con el modelo al que lo vas a enviar. La reescritura sigue la guía oficial de prompting de cada proveedor.
 
+![preview](preview.png)
+
 Selecciona un prompt en cualquier aplicación y pulsa **SUPER + ALT + P**. Se abre una tarjeta con el tema actual que hace lo siguiente:
 
 1. **Traduce al inglés.** Si el prompt está en otro idioma, muestra el idioma detectado y la traducción al inglés.

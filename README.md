@@ -4,6 +4,8 @@
 
 An [Omarchy](https://omarchy.org/) shell plugin that rewrites the prompt you have selected so it works better with the model you are sending it to. The rewrite follows that vendor's official prompting guide.
 
+![preview](preview.png)
+
 Select a prompt in any app and press **SUPER + ALT + P**. A themed card opens. It:
 
 1. **Translates to English.** If the prompt is in another language, the card shows the detected language and an English translation.
