@@ -51,21 +51,34 @@ Después compruébalo con `hyprctl reload && hyprctl configerrors`.
 
 ## Qué LLM hace la reescritura
 
-El LLM que reescribe (el «backend») es independiente del modelo de destino. Se configura en `~/.config/omarchy-prompt/config.json`, que se crea la primera vez que usas el plugin. En `"backend"` pones uno de estos perfiles:
+El que reescribe (el «motor») es independiente del modelo de destino. Se elige en el selector **Motor** de la tarjeta, que lista solo las herramientas CLI de IA que encuentra instaladas:
 
-| Perfil | Qué es | Requisitos |
-|---|---|---|
-| `claude-cli` (por defecto) | `claude -p` sin herramientas ni sesión guardada, con tu login de Claude Code | Claude Code instalado y con sesión iniciada |
-| `anthropic` | La API de Claude por HTTPS | Clave en `~/.config/omarchy-prompt/keys/anthropic` (permisos 600) o `ANTHROPIC_API_KEY` |
-| `openai`, `gemini`, `kimi`, `deepseek`, `openrouter` | Cualquier endpoint `/chat/completions` compatible con OpenAI | Clave en `~/.config/omarchy-prompt/keys/<nombre>` (permisos 600) |
-| `ollama`, `s24-llama` | Un servidor local compatible con OpenAI | Ninguno |
+| Motor | CLI | Modelo por defecto | Cómo se desactivan las herramientas |
+|---|---|---|---|
+| Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, sin MCP, sin settings, sin guardar sesión |
+| Codex | `codex exec` | GPT-6 Luna | `--sandbox read-only`, `--ephemeral` |
+| Antigravity | `agy` | Gemini 4 Hydrogen (`-low`) | En modo headless rechaza las herramientas que piden aprobación; nunca se pasa `--dangerously-skip-permissions` |
+| Kimi | `kimi` (Kimi Code) | K2.8 Preview (`kimi-for-coding`) | Agente propio con `tools: []` |
+| pi | `pi` | DeepSeek Flash | `--no-tools --no-session --no-context-files` |
+| OpenCode | `opencode run` | El que tenga configurado | Agente temporal con permisos que lo deniegan todo |
+| Hermes | `hermes -z` | El que tenga configurado | **Desactivado por defecto:** Hermes no permite desactivar sus herramientas. Se habilita con `profiles.hermes.allow_tools: true` |
+
+**Auto** usa la primera herramienta instalada, en el orden de la tabla.
+
+Una herramienta cuenta como instalada solo si responde a `--version`, así que los shims viejos de mise no aparecen. La detección se guarda en caché 6 horas; `./promptctl.py engines --refresh` la repite. Cada ejecución corre en un directorio temporal vacío.
+
+Los adaptadores de Codex, Antigravity, OpenCode y Hermes siguen su documentación oficial, pero no se han probado en una máquina con esas herramientas instaladas.
+
+Los perfiles de API (`anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api`, `openrouter`) aparecen en el selector cuando existe su archivo de clave en `~/.config/omarchy-prompt/keys/<nombre>` con permisos 600. Los locales (`ollama`, `s24-llama`) aparecen cuando pones `"enabled": true`.
+
+Para cambiar un modelo, edita `~/.config/omarchy-prompt/config.json`:
 
 ```bash
-./promptctl.py config set backend ollama
-./promptctl.py config set profiles.claude-cli.model sonnet   # más rápido (~8 s en vez de ~25 s con opus)
+./promptctl.py config set profiles.claude.model claude-haiku-5-5
+./promptctl.py config set profiles.kimi.model kimi-code/kimi-for-coding-highspeed
 ```
 
-El plugin rechaza los archivos de clave que otros usuarios puedan leer.
+Si el modelo escribe el prompt mejorado en otro idioma que no sea el inglés, el plugin lo detecta y se lo vuelve a pedir una vez.
 
 ## Actualizar las guías
 
@@ -82,7 +95,7 @@ Para añadir una versión de modelo, edita `models.json`. Para añadir una famil
 - **Traducción:** el texto se envía a Google Translate, igual que en omarchy-translate.
 - **Reescritura:** el texto se envía al backend que hayas configurado.
 - **Historial:** se guarda solo en local, en `~/.local/share/omarchy-prompt/history.sqlite3`.
-- **Sin shell:** la selección nunca pasa por un shell. El backend `claude-cli` corre sin herramientas, sin servidores MCP y sin archivos de configuración, en un directorio temporal vacío.
+- **Sin shell:** la selección nunca pasa por un shell. Cada motor CLI corre con sus herramientas desactivadas (ver la tabla de motores), en un directorio temporal vacío. Kimi Code guarda igualmente una sesión por ejecución, porque no tiene opción para evitarlo.
 - **Inyección de prompts:** el texto seleccionado se trata como material a reescribir, nunca como instrucciones. La respuesta del modelo se valida con un esquema JSON y siempre se muestra como texto plano.
 
 ## Licencia

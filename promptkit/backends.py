@@ -1,6 +1,7 @@
 """LLM backends that run the rewrite. Each returns the parsed JSON object.
 
-- claude-cli    : the local Claude Code CLI (`claude -p`), using your login.
+- cli           : a local AI CLI harness (Claude Code, Codex, Antigravity,
+                  Kimi Code, pi, OpenCode, Hermes); see engines.py.
 - anthropic     : the Claude API over HTTPS (raw HTTP; the plugin is stdlib-only).
 - openai-compat : any /chat/completions endpoint (OpenAI, Gemini, Kimi,
                   DeepSeek, OpenRouter, Ollama, llama.cpp on the S24, ...).
@@ -8,13 +9,12 @@
 import json
 import os
 import re
-import shutil
 import stat
-import subprocess
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from . import engines
 
 MAX_RESPONSE = 1024 * 1024
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
@@ -25,16 +25,6 @@ FALLBACK_MODELS = {"claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "c
 
 class BackendError(Exception):
     pass
-
-
-# The running claude subprocess, so a SIGTERM to promptctl can stop it too.
-CHILD = None
-
-
-def terminate_child():
-    child = CHILD
-    if child is not None and child.poll() is None:
-        child.terminate()
 
 
 def read_key(path_str, env_var=None):
@@ -99,74 +89,6 @@ def _http_json(url, body, headers, timeout):
         return json.loads(raw.decode("utf-8"))
     except ValueError as e:
         raise BackendError("invalid JSON from server") from e
-
-
-# ---------------------------------------------------------------- claude-cli
-
-def _find_claude(command):
-    if os.path.isabs(os.path.expanduser(command)):
-        path = os.path.expanduser(command)
-        return path if os.access(path, os.X_OK) else None
-    found = shutil.which(command)
-    if found:
-        return found
-    # The shell's environment often lacks mise/npm paths.
-    home = Path.home()
-    for candidate in (
-        home / ".local/share/mise/shims" / command,
-        home / ".local/share/mise/command-wrappers/bin" / command,
-        home / ".local/bin" / command,
-        home / ".claude/local" / command,
-    ):
-        if os.access(candidate, os.X_OK):
-            return str(candidate)
-    return None
-
-
-def claude_cli(profile, system, user, schema, timeout):
-    binary = _find_claude(profile.get("command") or "claude")
-    if not binary:
-        raise BackendError("claude CLI not found (set profiles.claude-cli.command)")
-    cmd = [
-        binary, "-p",
-        "--tools", "",
-        "--strict-mcp-config",
-        "--no-session-persistence",
-        "--disable-slash-commands",
-        "--setting-sources", "",
-        "--output-format", "json",
-        "--system-prompt", system,
-        "--json-schema", json.dumps(schema),
-    ]
-    if profile.get("model"):
-        cmd += ["--model", str(profile["model"])]
-    if profile.get("effort"):
-        cmd += ["--effort", str(profile["effort"])]
-    env = dict(os.environ)
-    path_dirs = [str(Path.home() / ".local/share/mise/shims"), str(Path.home() / ".local/bin")]
-    env["PATH"] = os.pathsep.join(path_dirs + [env.get("PATH", "/usr/bin:/bin")])
-    global CHILD
-    with tempfile.TemporaryDirectory(prefix="omarchy-prompt-") as cwd:
-        CHILD = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 text=True, cwd=cwd, env=env)
-        try:
-            stdout, stderr = CHILD.communicate(user, timeout=timeout)
-        except subprocess.TimeoutExpired as e:
-            CHILD.kill()
-            CHILD.communicate()
-            raise BackendError("timeout") from e
-        finally:
-            returncode, CHILD = CHILD.returncode, None
-    try:
-        data = json.loads(stdout)
-    except ValueError:
-        tail = (stderr or stdout or "").strip().splitlines()[-1:] or ["no output"]
-        raise BackendError(f"claude exited {returncode}: {tail[0][:200]}")
-    if data.get("is_error"):
-        raise BackendError(f"claude: {str(data.get('result') or data.get('subtype'))[:200]}")
-    if isinstance(data.get("structured_output"), dict):
-        return data["structured_output"]
-    return extract_json(data.get("result", ""))
 
 
 # ----------------------------------------------------------------- anthropic
@@ -235,16 +157,78 @@ def openai_compat(profile, system, user, schema, timeout):
     return extract_json(content)
 
 
-BACKENDS = {"claude-cli": claude_cli, "anthropic": anthropic, "openai-compat": openai_compat}
+BACKENDS = {"anthropic": anthropic, "openai-compat": openai_compat}
+
+
+def terminate_child():
+    engines.terminate_child()
+
+
+def _api_ready(profile):
+    """API profiles show up only when they can work: a key is present, or
+    a keyless (local) profile was explicitly enabled."""
+    if profile.get("type") == "anthropic" and os.environ.get("ANTHROPIC_API_KEY"):
+        return True
+    key = profile.get("api_key_file")
+    if key:
+        return Path(os.path.expanduser(key)).is_file()
+    return bool(profile.get("enabled"))
+
+
+def available(config, refresh=False):
+    """Selectable rewriters: installed CLI engines first, then ready API profiles."""
+    detected = engines.detect(refresh)
+    out = []
+    profiles = config.get("profiles", {})
+    for name in engines.AUTO_ORDER:
+        spec = engines.ENGINES[name]
+        prof = profiles.get(name, {})
+        info = detected.get(name, {})
+        if not info.get("installed"):
+            continue
+        model = prof.get("model", spec["model"])
+        label = prof.get("model_label") or (spec["model_label"] if model == spec["model"] else model) or "default"
+        out.append({"id": name, "kind": "cli", "label": f"{spec['label']} · {label}", "short": spec["label"],
+                    "version": info.get("version", ""),
+                    "blocked": name == "hermes" and not prof.get("allow_tools")})
+    for name, prof in profiles.items():
+        if isinstance(prof, dict) and prof.get("type") in BACKENDS and _api_ready(prof):
+            out.append({"id": name, "kind": "api", "label": f"{name} · {prof.get('model', '')}", "short": name,
+                        "version": "", "blocked": False})
+    return out
+
+
+def resolve(config, backend_name=None):
+    """Turn 'auto' (or nothing) into a concrete profile name."""
+    name = backend_name or config.get("backend") or "auto"
+    if name == "claude-cli":  # pre-1.1 name
+        name = "claude"
+    if name != "auto":
+        return name
+    for item in available(config):
+        if not item["blocked"]:
+            return item["id"]
+    raise BackendError("no rewriter found: install Claude Code, Codex, Antigravity, Kimi Code, pi or OpenCode, "
+                       "or configure an API profile")
 
 
 def run(config, system, user, schema, backend_name=None):
-    name = backend_name or config.get("backend") or "claude-cli"
-    profile = config.get("profiles", {}).get(name)
+    name = resolve(config, backend_name)
+    profiles = config.get("profiles", {})
+    profile = profiles.get(name)
+    if profile is None and name in engines.ENGINES:
+        profile = {"type": "cli"}
     if not isinstance(profile, dict):
-        raise BackendError(f"unknown backend profile {name!r}")
-    fn = BACKENDS.get(profile.get("type", name))
-    if not fn:
-        raise BackendError(f"unknown backend type {profile.get('type')!r}")
+        raise BackendError(f"unknown backend {name!r}")
     timeout = float(config.get("timeout") or 90)
+    kind = profile.get("type", "cli")
+    if kind == "cli":
+        try:
+            raw = engines.run(profile.get("engine", name), profile, system, user, schema, timeout)
+        except engines.EngineError as e:
+            raise BackendError(str(e)) from e
+        return name, raw if isinstance(raw, dict) else extract_json(raw)
+    fn = BACKENDS.get(kind)
+    if not fn:
+        raise BackendError(f"unknown backend type {kind!r}")
     return name, fn(profile, system, user, schema, timeout)

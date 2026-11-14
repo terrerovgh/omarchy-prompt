@@ -105,3 +105,12 @@ def to_english(text):
                 return text, "en"
         out.append(translated)
     return "\n".join(out), source or "?"
+
+
+def detect(text):
+    """Language code of text (first 1000 characters), or '' if unknown."""
+    try:
+        _, source = _one(text[:1000], "en")
+    except TranslateError:
+        return ""
+    return source.split("-")[0]

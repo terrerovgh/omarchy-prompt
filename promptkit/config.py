@@ -9,42 +9,46 @@ import os
 from . import paths
 
 DEFAULTS = {
-    "backend": "claude-cli",
+    # "auto" = the first installed CLI in engines.AUTO_ORDER; or a profile name.
+    "backend": "auto",
     "ui_lang": "es",
     "last_target": "",
     "timeout": 90,
     "profiles": {
-        "claude-cli": {
-            "type": "claude-cli",
-            "command": "claude",
-            "model": "opus",
-            "effort": "low",
-        },
-        "anthropic": {
+        # Local CLI harnesses (detected automatically). Override "model" here.
+        "claude": {"type": "cli", "engine": "claude"},
+        "codex": {"type": "cli", "engine": "codex"},
+        "antigravity": {"type": "cli", "engine": "antigravity"},
+        "kimi": {"type": "cli", "engine": "kimi"},
+        "pi": {"type": "cli", "engine": "pi"},
+        "opencode": {"type": "cli", "engine": "opencode"},
+        "hermes": {"type": "cli", "engine": "hermes", "allow_tools": False},
+        # HTTP APIs: offered once their key file exists (local ones need "enabled": true).
+        "anthropic-api": {
             "type": "anthropic",
             "model": "claude-opus-5-5",
             "effort": "low",
             "api_key_file": "~/.config/omarchy-prompt/keys/anthropic",
         },
-        "openai": {
+        "openai-api": {
             "type": "openai-compat",
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-6.1-sol",
             "api_key_file": "~/.config/omarchy-prompt/keys/openai",
         },
-        "gemini": {
+        "gemini-api": {
             "type": "openai-compat",
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
             "model": "gemini-4-hydrogen",
             "api_key_file": "~/.config/omarchy-prompt/keys/gemini",
         },
-        "kimi": {
+        "kimi-api": {
             "type": "openai-compat",
             "base_url": "https://api.moonshot.ai/v1",
             "model": "kimi-k3.1-pro",
             "api_key_file": "~/.config/omarchy-prompt/keys/kimi",
         },
-        "deepseek": {
+        "deepseek-api": {
             "type": "openai-compat",
             "base_url": "https://api.deepseek.com",
             "model": "deepseek-v4-pro",
@@ -61,12 +65,14 @@ DEFAULTS = {
             "base_url": "http://127.0.0.1:11434/v1",
             "model": "qwen3.6:27b",
             "api_key_file": "",
+            "enabled": False,
         },
         "s24-llama": {
             "type": "openai-compat",
             "base_url": "http://josmars-s24.taildab01d.ts.net:8080/v1",
             "model": "local",
             "api_key_file": "",
+            "enabled": False,
         },
     },
 }
@@ -82,6 +88,22 @@ def _merge(base, extra):
     return out
 
 
+def _migrate(user):
+    """1.0 wrote every default profile into the user file; 1.1 renamed them."""
+    profiles = user.get("profiles")
+    if isinstance(profiles, dict):
+        if profiles.get("claude-cli", {}).get("type") == "claude-cli":
+            profiles.pop("claude-cli")
+        for old in ("anthropic", "openai", "gemini", "kimi", "deepseek"):
+            prof = profiles.get(old)
+            if isinstance(prof, dict) and prof.get("type") in ("anthropic", "openai-compat"):
+                profiles.pop(old)
+                profiles.setdefault(old + "-api", prof)
+    if user.get("backend") == "claude-cli":
+        user["backend"] = "auto"
+    return user
+
+
 def load():
     path = paths.config_path()
     user = {}
@@ -93,7 +115,7 @@ def load():
             user = {}
     if not isinstance(user, dict):
         user = {}
-    return _merge(DEFAULTS, user)
+    return _merge(DEFAULTS, _migrate(user))
 
 
 def _read_user():
@@ -120,7 +142,7 @@ def ensure_file():
     """Write a starter config on first run so users can find and edit it."""
     path = paths.config_path()
     if not path.exists():
-        save_user({"backend": DEFAULTS["backend"], "ui_lang": DEFAULTS["ui_lang"], "profiles": DEFAULTS["profiles"]})
+        save_user({"backend": DEFAULTS["backend"], "ui_lang": DEFAULTS["ui_lang"]})
 
 
 def set_value(key, value):
@@ -141,8 +163,12 @@ def set_value(key, value):
     save_user(data)
 
 
-def remember_target(target):
-    data = _read_user()
-    if data.get("last_target") != target:
-        data["last_target"] = target
+def remember(key, value):
+    data = _migrate(_read_user())
+    if data.get(key) != value:
+        data[key] = value
         save_user(data)
+
+
+def remember_target(target):
+    remember("last_target", target)

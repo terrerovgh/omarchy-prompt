@@ -30,5 +30,8 @@
   "cat.business": "Business",
   "cat.system-prompt": "System prompt",
   "cat.image-gen": "Image gen",
-  "cat.other": "Other"
+  "cat.other": "Other",
+  "engine": "Engine",
+  "autoEngine": "Auto · %1",
+  "retrying": "Fixing the prompt language…"
 }

@@ -4,7 +4,8 @@
   promptctl.py improve --target claude/opus-5.5 [--context auto|CATEGORY]
                        [--text TEXT | stdin] [--english TEXT --source LANG]
                        [--backend PROFILE] [--ui-lang es] [--no-save]
-  promptctl.py models
+  promptctl.py models [--refresh]
+  promptctl.py engines [--refresh]          detected local AI CLIs + usable API profiles
   promptctl.py history list [--q TEXT] [--category C] [--family F] [--fav] [--limit N]
   promptctl.py history get|delete|fav ID
   promptctl.py history stats
@@ -20,7 +21,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from promptkit import backends, catalog, config, rewrite, store, translate  # noqa: E402
+from promptkit import backends, catalog, config, engines, rewrite, store, translate  # noqa: E402
 from promptkit import paths  # noqa: E402
 
 MAX_INPUT = 20000
@@ -73,7 +74,11 @@ def cmd_improve(args):
     emit({"stage": "translated", "source": source, "english": english if source != "en" else ""})
 
     # 2. rewrite
-    emit({"stage": "rewriting", "target": version["label"], "backend": args.backend or cfg.get("backend")})
+    try:
+        backend_choice = backends.resolve(cfg, args.backend)
+    except backends.BackendError as e:
+        fail(e)
+    emit({"stage": "rewriting", "target": version["label"], "backend": backend_choice})
     ui_lang = (args.ui_lang or cfg.get("ui_lang") or "es").split("-")[0]
     try:
         system = rewrite.build_system(family, version, ui_lang, forced)
@@ -84,7 +89,7 @@ def cmd_improve(args):
     result, backend_name, last_error = None, "", None
     for _attempt in range(2):
         try:
-            backend_name, raw = backends.run(cfg, system, user, rewrite.SCHEMA, args.backend)
+            backend_name, raw = backends.run(cfg, system, user, rewrite.SCHEMA, backend_choice)
             result = rewrite.validate(raw, forced)
             break
         except (backends.BackendError, rewrite.RewriteError) as e:
@@ -94,6 +99,18 @@ def cmd_improve(args):
                 break
     if result is None:
         fail(last_error or "rewrite failed")
+
+    # Some models answer in the user's language despite the rule; check and retry once.
+    if source not in ("en", "?"):
+        lang = translate.detect(result["improved_prompt"])
+        if lang and lang != "en":
+            emit({"stage": "retrying", "reason": f"prompt came back in {lang}"})
+            retry_user = user + "\n\n" + rewrite.LANG_CORRECTION.format(lang=lang)
+            try:
+                backend_name, raw = backends.run(cfg, system, retry_user, rewrite.SCHEMA, backend_choice)
+                result = rewrite.validate(raw, forced)
+            except (backends.BackendError, rewrite.RewriteError):
+                pass  # keep the first result
 
     _, reviewed = catalog.read_guide(family)
     guide_ref = f"{family['guide']}@{reviewed}"
@@ -123,6 +140,8 @@ def cmd_improve(args):
             emit({"stage": "save_failed", "error": str(e)[:200]})
     try:
         config.remember_target(target_id)
+        if args.backend:
+            config.remember("backend", args.backend)
     except OSError:
         pass
 
@@ -142,14 +161,30 @@ def cmd_improve(args):
 
 # ------------------------------------------------------------------- others
 
-def cmd_models(_args):
+def cmd_models(args):
     cfg = config.load()
     data = catalog.public()
     data["ok"] = True
     data["last_target"] = cfg.get("last_target") or data["default"]
-    data["backend"] = cfg.get("backend")
+    data["backend"] = cfg.get("backend") or "auto"
     data["ui_lang"] = cfg.get("ui_lang", "es")
+    data["engines"] = backends.available(cfg, getattr(args, "refresh", False))
+    try:
+        data["resolved_backend"] = backends.resolve(cfg)
+    except backends.BackendError:
+        data["resolved_backend"] = ""
     emit(data)
+
+
+def cmd_engines(args):
+    cfg = config.load()
+    detected = engines.detect(args.refresh)
+    emit({
+        "ok": True,
+        "backend": cfg.get("backend") or "auto",
+        "available": backends.available(cfg),
+        "detected": {k: {"label": engines.ENGINES[k]["label"], **v} for k, v in detected.items()},
+    })
 
 
 def cmd_history(args):
@@ -225,7 +260,13 @@ def parser():
     imp.add_argument("--no-save", action="store_true")
     imp.set_defaults(fn=cmd_improve)
 
-    sub.add_parser("models").set_defaults(fn=cmd_models)
+    mod = sub.add_parser("models")
+    mod.add_argument("--refresh", action="store_true", help="re-detect installed CLIs")
+    mod.set_defaults(fn=cmd_models)
+
+    eng = sub.add_parser("engines")
+    eng.add_argument("--refresh", action="store_true")
+    eng.set_defaults(fn=cmd_engines)
 
     hist = sub.add_parser("history")
     hist.add_argument("action", choices=["list", "get", "delete", "fav", "stats", "export"])

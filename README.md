@@ -51,22 +51,35 @@ Then check it with `hyprctl reload && hyprctl configerrors`.
 
 ## Which LLM does the rewriting
 
-The rewriting LLM (the "backend") is a separate choice from the target model. Configure it in `~/.config/omarchy-prompt/config.json`, which is created on first use. Set `"backend"` to one of the profiles:
+The rewriter (the "engine") is a separate choice from the target model. Pick it in the card's **Engine** selector. The card lists the AI command-line tools it finds installed, and only those:
 
-| Profile | Type | Needs |
-|---|---|---|
-| `claude-cli` (default) | Runs `claude -p` without tools or session history, using your Claude Code login | Claude Code installed and logged in |
-| `anthropic` | Claude API over HTTPS | An API key in `~/.config/omarchy-prompt/keys/anthropic` (mode 600) or `ANTHROPIC_API_KEY` |
-| `openai`, `gemini`, `kimi`, `deepseek`, `openrouter` | Any OpenAI-compatible `/chat/completions` endpoint | A key file in `~/.config/omarchy-prompt/keys/<name>` (mode 600) |
-| `ollama`, `s24-llama` | Local OpenAI-compatible server | No key |
+| Engine | CLI | Default model | How tools are kept off |
+|---|---|---|---|
+| Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, no MCP, no settings, no saved session |
+| Codex | `codex exec` | GPT-6 Luna | `--sandbox read-only`, `--ephemeral` |
+| Antigravity | `agy` | Gemini 4 Hydrogen (`-low`) | Headless mode refuses tools that need approval; `--dangerously-skip-permissions` is never passed |
+| Kimi | `kimi` (Kimi Code) | K2.8 Preview (`kimi-for-coding`) | Custom agent file with `tools: []` |
+| pi | `pi` | DeepSeek Flash | `--no-tools --no-session --no-context-files` |
+| OpenCode | `opencode run` | Its configured default | Temporary agent whose permissions deny everything |
+| Hermes | `hermes -z` | Its configured default | **Off by default:** Hermes cannot disable its tools. Opt in with `profiles.hermes.allow_tools: true` |
+
+**Auto** uses the first installed tool in the order above.
+
+A tool counts as installed only when it answers `--version`, so leftover mise shims are ignored. Detection is cached for 6 hours; `./promptctl.py engines --refresh` re-checks. Every run happens in an empty temporary directory.
+
+The Codex, Antigravity, OpenCode and Hermes adapters follow their official docs but were not run on a machine with those tools installed.
+
+API profiles (`anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api`, `openrouter`) appear in the selector once their key file exists in `~/.config/omarchy-prompt/keys/<name>` with mode 600. The local `ollama` and `s24-llama` profiles appear once you set `"enabled": true`.
+
+To change a model, edit `~/.config/omarchy-prompt/config.json`:
 
 ```bash
-./promptctl.py config set backend ollama
-./promptctl.py config set profiles.ollama.model qwen3.6:27b
-./promptctl.py config set profiles.claude-cli.model sonnet   # faster rewrites (~8 s instead of ~25 s with opus)
+./promptctl.py config set profiles.claude.model claude-haiku-5-5
+./promptctl.py config set profiles.kimi.model kimi-code/kimi-for-coding-highspeed
+./promptctl.py config set profiles.antigravity.model gemini-4-hydrogen-medium
 ```
 
-The plugin refuses key files that other users can read.
+If the model writes the improved prompt in a language other than English, the plugin notices and asks once more.
 
 ## Keeping the guides current
 
@@ -104,6 +117,7 @@ echo "escribe un email anunciando una subida de precios" | ./promptctl.py improv
 | `guides/*.md` | Prompting guides distilled from official docs |
 | `tools/refresh-guides.py` | Re-fetches the sources and drafts updated guides |
 | `bin/omarchy-prompt-selection` | Reads the selection and opens the plugin |
+| `promptkit/engines.py` | Detects the local AI CLIs and runs them with tools off |
 | `tests/` | Offline tests: `python3 -m unittest discover -s tests` |
 
 ## Privacy and security
@@ -111,9 +125,13 @@ echo "escribe un email anunciando una subida de precios" | ./promptctl.py improv
 - **Translation:** the selected text is sent to Google Translate's keyless endpoints, just like omarchy-translate.
 - **Rewriting:** the selected text is sent to the configured backend: Anthropic through Claude Code or the API, or whichever provider or local server you configure.
 - **History:** stored locally in `~/.local/share/omarchy-prompt/history.sqlite3`.
-- **No shell:** the selection is passed as a process argument and never runs through a shell. The Claude Code backend runs with all tools disabled, no MCP servers, no settings files, and no saved session, in an empty temporary directory.
+- **No shell:** the selection is passed as a process argument and never runs through a shell. Every CLI engine runs with its tools off (see the engine table), in an empty temporary directory. Kimi Code still records a session per run, because it has no option to skip that.
 - **Prompt injection:** the selected text is wrapped in tags and marked as material to rewrite, not instructions. Model output is validated against a JSON schema and always shown as plain text.
 - **Limits:** input is capped at 20 000 characters and HTTP responses at 1 MB. The default timeout is 90 s.
+
+## Developing
+
+The Omarchy shell reads this plugin's QML once, when the shell starts, because the plugin folder is outside Quickshell's config folder. After editing `PromptImprover.qml` or `i18n/`, run `omarchy restart shell`. The Python side runs fresh on every request and needs no restart.
 
 ## License
 

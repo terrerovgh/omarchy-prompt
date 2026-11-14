@@ -8,12 +8,13 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from promptkit import backends, catalog, config, rewrite, store  # noqa: E402
+from promptkit import backends, catalog, config, engines, rewrite, store  # noqa: E402
 
 GOOD = {
     "category": "coding",
@@ -193,24 +194,112 @@ class HttpBackendTests(unittest.TestCase):
         self.assertEqual(backends.read_key(str(self.key)), "sk-test")
 
 
-class ClaudeCliTests(unittest.TestCase):
-    def test_fake_claude(self):
+def _fake_cli(tmp, name, stdout):
+    """An executable that records its argv/stdin/cwd files and prints stdout."""
+    fake = Path(tmp) / name
+    log = Path(tmp) / f"{name}.log.json"
+    fake.write_text(
+        f"#!{sys.executable}\nimport json,os,sys\n"
+        "if sys.argv[1:] == ['--version']:\n    print('9.9.9'); sys.exit(0)\n"
+        "stdin = sys.stdin.read()\n"
+        "files = {f: open(f).read() for f in os.listdir('.')}\n"
+        f"json.dump({{'argv': sys.argv[1:], 'stdin': stdin, 'files': files}}, open({str(log)!r}, 'w'))\n"
+        f"sys.stdout.write({stdout!r})\n"
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    return fake, log
+
+
+class EngineTests(unittest.TestCase):
+    def run_engine(self, engine, stdout, profile=None):
         with tempfile.TemporaryDirectory() as tmp:
-            fake = Path(tmp) / "claude"
-            log = Path(tmp) / "args.json"
-            fake.write_text(
-                "#!/usr/bin/env python3\nimport json,sys\n"
-                f"json.dump(sys.argv[1:], open({str(log)!r},'w'))\n"
-                "sys.stdin.read()\n"
-                f"print(json.dumps({{'is_error': False, 'structured_output': {GOOD!r}}}))\n"
-            )
-            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-            out = backends.claude_cli({"command": str(fake), "model": "opus", "effort": "low"}, "SYS", "USER", rewrite.SCHEMA, 10)
-            self.assertEqual(out["category"], "coding")
-            args = json.loads(log.read_text())
-            self.assertEqual(args[args.index("--tools") + 1], "")
-            self.assertIn("--no-session-persistence", args)
-            self.assertEqual(args[args.index("--system-prompt") + 1], "SYS")
+            fake, log = _fake_cli(tmp, engine, stdout)
+            prof = dict(profile or {}, command=str(fake))
+            out = engines.run(engine, prof, "SYS", "USER TEXT", rewrite.SCHEMA, 10)
+            return out, json.loads(log.read_text())
+
+    def test_claude_has_no_tools(self):
+        out, log = self.run_engine("claude", json.dumps({"is_error": False, "structured_output": GOOD}))
+        self.assertEqual(out["category"], "coding")
+        argv = log["argv"]
+        self.assertEqual(argv[argv.index("--tools") + 1], "")
+        self.assertIn("--no-session-persistence", argv)
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-sonnet-5-5")
+        self.assertEqual(log["stdin"], "USER TEXT")
+
+    def test_kimi_agent_has_empty_tool_list(self):
+        stream = "\n".join([json.dumps({"role": "meta"}), json.dumps({"role": "assistant", "content": json.dumps(GOOD)})])
+        out, log = self.run_engine("kimi", stream)
+        self.assertEqual(backends.extract_json(out)["title"], GOOD["title"])
+        agent = log["files"]["prompt-rewriter.md"]
+        self.assertIn("\ntools: []\n", agent)
+        self.assertIn("SYS", agent)
+        self.assertEqual(log["argv"][log["argv"].index("-m") + 1], "kimi-code/kimi-for-coding")
+
+    def test_pi_no_tools_no_session(self):
+        out, log = self.run_engine("pi", json.dumps(GOOD))
+        for flag in ("--no-tools", "--no-session", "--no-context-files", "--no-mcp"):
+            self.assertIn(flag, log["argv"])
+        self.assertEqual(backends.extract_json(out), GOOD)
+
+    def test_codex_read_only_ephemeral(self):
+        _, log = self.run_engine("codex", json.dumps(GOOD))
+        argv = log["argv"]
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "read-only")
+        self.assertIn("--ephemeral", argv)
+        self.assertEqual(argv[argv.index("--model") + 1], "gpt-6-luna")
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", argv)
+        self.assertTrue(log["stdin"].startswith("SYS"))
+
+    def test_antigravity_never_skips_permissions(self):
+        out, log = self.run_engine("antigravity", json.dumps({"status": "SUCCESS", "response": json.dumps(GOOD)}))
+        self.assertEqual(backends.extract_json(out), GOOD)
+        self.assertFalse(any("dangerously" in a for a in log["argv"]))
+        self.assertEqual(log["argv"][log["argv"].index("--model") + 1], "gemini-4-hydrogen-low")
+
+    def test_opencode_denies_everything(self):
+        _, log = self.run_engine("opencode", json.dumps(GOOD))
+        cfg = json.loads(log["files"]["opencode.json"])
+        agent = cfg["agents"][cfg["default_agent"]]
+        self.assertEqual(agent["permissions"], [{"action": "*", "resource": "*", "effect": "deny"}])
+
+    def test_hermes_blocked_unless_allowed(self):
+        with self.assertRaises(engines.EngineError):
+            self.run_engine("hermes", "x")
+        out, _ = self.run_engine("hermes", json.dumps(GOOD), {"allow_tools": True})
+        self.assertEqual(backends.extract_json(out), GOOD)
+
+    def test_detection_rejects_stale_shims(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = Path(tmp) / "codex"
+            stale.write_text("#!/bin/sh\necho 'mise ERROR codex is not a valid shim'\nexit 1\n")
+            stale.chmod(0o755)
+            good, _ = _fake_cli(tmp, "pi", "")
+            old_path, old_cache = os.environ.get("PATH", ""), os.environ.get("XDG_CACHE_HOME")
+            os.environ["PATH"] = tmp
+            os.environ["XDG_CACHE_HOME"] = tmp
+            try:
+                with mock.patch.object(engines, "_search_dirs", return_value=[]):
+                    found = engines.detect(refresh=True)
+            finally:
+                os.environ["PATH"] = old_path
+                if old_cache is None:
+                    os.environ.pop("XDG_CACHE_HOME")
+                else:
+                    os.environ["XDG_CACHE_HOME"] = old_cache
+            self.assertFalse(found["codex"]["installed"])
+            self.assertTrue(found["pi"]["installed"])
+            self.assertEqual(found["pi"]["version"], "9.9.9")
+
+    def test_auto_picks_first_installed_in_order(self):
+        detected = {k: {"installed": k in ("kimi", "pi", "hermes")} for k in engines.ENGINES}
+        with mock.patch.object(engines, "detect", return_value=detected):
+            cfg = config.DEFAULTS
+            self.assertEqual(backends.resolve(cfg), "kimi")
+            ids = [e["id"] for e in backends.available(cfg)]
+            self.assertEqual(ids[:3], ["kimi", "pi", "hermes"])
+            self.assertTrue([e for e in backends.available(cfg) if e["id"] == "hermes"][0]["blocked"])
+            self.assertEqual(backends.resolve(cfg, "claude-cli"), "claude")  # old name
 
 
 class CliTests(unittest.TestCase):
@@ -237,8 +326,20 @@ class CliTests(unittest.TestCase):
             self.run_cli("config", "set", "profiles.ollama.model", "qwen3:8b", env=env)
             shown = self.run_cli("config", "show", env=env)[0]["config"]
             self.assertEqual(shown["profiles"]["ollama"]["model"], "qwen3:8b")
-            self.assertEqual(shown["profiles"]["claude-cli"]["type"], "claude-cli")  # defaults merged
+            self.assertEqual(shown["profiles"]["claude"]["type"], "cli")  # defaults merged
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigMigrationTests(unittest.TestCase):
+    def test_old_file_is_migrated(self):
+        old = {"backend": "claude-cli", "profiles": {"claude-cli": {"type": "claude-cli", "model": "opus"},
+                                                       "kimi": {"type": "openai-compat", "model": "x"}}}
+        user = config._migrate(json.loads(json.dumps(old)))
+        self.assertEqual(user["backend"], "auto")
+        self.assertNotIn("claude-cli", user["profiles"])
+        self.assertEqual(user["profiles"]["kimi-api"]["model"], "x")
+        merged = config._merge(config.DEFAULTS, user)
+        self.assertEqual(merged["profiles"]["kimi"]["type"], "cli")

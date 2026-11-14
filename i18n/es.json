@@ -30,5 +30,8 @@
   "cat.business": "Negocios",
   "cat.system-prompt": "System prompt",
   "cat.image-gen": "Imagen",
-  "cat.other": "Otro"
+  "cat.other": "Otro",
+  "engine": "Motor",
+  "autoEngine": "Auto · %1",
+  "retrying": "Corrigiendo el idioma del prompt…"
 }

@@ -31,6 +31,9 @@ Item {
   property string family: ""
   property string version: ""
   property string context: "auto"
+  property var engines: []                  // installed CLIs + ready API profiles
+  property string backend: "auto"
+  property string resolvedBackend: ""
 
   // Improve view
   property string phase: "idle"             // idle | loading | done | error | empty
@@ -96,6 +99,15 @@ Item {
   }
   readonly property var contextOptions: [{ value: "auto", label: strings.t("auto") }].concat(
     root.categories.map(function(c) { return { value: c, label: root.catLabel(c) } }))
+  function engineLabel(id, short) {
+    for (var i = 0; i < root.engines.length; i++)
+      if (root.engines[i].id === id) return short ? (root.engines[i].short || root.engines[i].label) : root.engines[i].label
+    return id
+  }
+  readonly property var engineOptions: [{
+      value: "auto",
+      label: root.resolvedBackend ? strings.t("autoEngine").arg(root.engineLabel(root.resolvedBackend, true)) : strings.t("auto")
+    }].concat(root.engines.filter(function(e) { return !e.blocked }).map(function(e) { return { value: e.id, label: e.label } }))
   readonly property var historyCategoryOptions: [{ value: "", label: strings.t("all") }].concat(
     root.categories.map(function(c) { return { value: c, label: root.catLabel(c) } }))
   readonly property var historyFamilyOptions: [{ value: "", label: strings.t("all") }].concat(root.familyOptions)
@@ -114,7 +126,8 @@ Item {
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
-    if (root.families.length === 0 && !modelsProcess.running) modelsProcess.running = true
+    // Refresh the catalog and the installed-engine list (cached by promptctl).
+    if (!modelsProcess.running) modelsProcess.running = true
 
     root.opened = true
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -166,6 +179,7 @@ Item {
     var args = ["improve", "--ui-lang", strings.language || "en", "--text", root.original]
     if (root.family && root.version) args = args.concat(["--target", root.family + "/" + root.version])
     if (root.context !== "auto") args = args.concat(["--context", root.context])
+    if (root.backend) args = args.concat(["--backend", root.backend])
     if (reuseEnglish && root.sourceLang) args = args.concat(["--source", root.sourceLang, "--english", root.english || root.original])
 
     root.phase = "loading"
@@ -205,8 +219,11 @@ Item {
       else if (msg.stage === "translated") {
         root.sourceLang = String(msg.source || "").slice(0, 16)
         root.english = typeof msg.english === "string" ? msg.english : ""
+      } else if (msg.stage === "retrying") {
+        root.stage = strings.t("retrying")
       } else if (msg.stage === "rewriting") {
         root.stage = strings.t("rewriting").arg(String(msg.target || "").slice(0, 60))
+          + "\n" + root.engineLabel(String(msg.backend || ""))
       }
       return
     }
@@ -339,6 +356,11 @@ Item {
         if (!data || !Array.isArray(data.families)) return
         root.families = data.families
         root.categories = Array.isArray(data.categories) ? data.categories : []
+        root.engines = Array.isArray(data.engines) ? data.engines : []
+        root.resolvedBackend = String(data.resolved_backend || "")
+        var b = String(data.backend || "auto")
+        if (b !== "auto" && root.engines.filter(function(e) { return e.id === b && !e.blocked }).length === 0) b = "auto"
+        if (!improveProcess.running) root.backend = b
         if (!root.family) root.setTarget(String(data.last_target || data["default"] || ""))
         if (!root.familyById(root.family) && root.families.length > 0) {
           root.family = root.families[0].id
@@ -576,7 +598,7 @@ Item {
               id: selectors
               width: parent.width
               spacing: root.gap
-              readonly property real cellWidth: (width - spacing * 2) / 3
+              readonly property real cellWidth: (width - spacing * 3) / 4
 
               Dropdown {
                 width: selectors.cellWidth
@@ -613,6 +635,18 @@ Item {
                 onChanged: function(v) {
                   if (v === root.context) return
                   root.context = v
+                  root.runImprove(true)
+                }
+              }
+              Dropdown {
+                width: selectors.cellWidth
+                label: strings.t("engine")
+                value: root.backend
+                options: root.engineOptions
+                fontFamily: root.fontFamily
+                onChanged: function(v) {
+                  if (v === root.backend) return
+                  root.backend = v
                   root.runImprove(true)
                 }
               }
