@@ -55,19 +55,19 @@ The rewriter (the "engine") is a separate choice from the target model. Pick it 
 
 | Engine | CLI | Default model | How tools are kept off |
 |---|---|---|---|
+| pi | `pi` | DeepSeek Flash | `--no-tools --no-session --no-context-files` |
 | Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, no MCP, no settings, no saved session |
 | Codex | `codex exec` | GPT-6 Luna | `--sandbox read-only`, `--ephemeral` |
-| Antigravity | `agy` | Gemini 4 Hydrogen (`-low`) | Headless mode refuses tools that need approval; `--dangerously-skip-permissions` is never passed |
+| Antigravity | `agy` | Gemini 4 Hydrogen (`-low`) | Headless mode auto-denies tools that need approval (shell, edits); `--dangerously-skip-permissions` is never passed; slash commands off |
 | Kimi | `kimi` (Kimi Code) | K2.8 Preview (`kimi-for-coding`) | Custom agent file with `tools: []` |
-| pi | `pi` | DeepSeek Flash | `--no-tools --no-session --no-context-files` |
 | OpenCode | `opencode run` | Its configured default | Temporary agent whose permissions deny everything |
 | Hermes | `hermes -z` | Its configured default | **Off by default:** Hermes cannot disable its tools. Opt in with `profiles.hermes.allow_tools: true` |
 
-**Auto** uses the first installed tool in the order above.
+The default engine is **pi**. **Auto** uses the first installed tool in the order above, and pi comes first. Picking another engine in the card applies to that card only; to change the default, run `./promptctl.py config set backend claude`.
 
 A tool counts as installed only when it answers `--version`, so leftover mise shims are ignored. Detection is cached for 6 hours; `./promptctl.py engines --refresh` re-checks. Every run happens in an empty temporary directory.
 
-The Codex, Antigravity, OpenCode and Hermes adapters follow their official docs but were not run on a machine with those tools installed.
+Claude, Codex, Antigravity, Kimi and pi were tested for real, including a check that a selection asking the engine to run `touch` cannot create the file. The OpenCode and Hermes adapters follow their official docs but have not been run.
 
 API profiles (`anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api`, `openrouter`) appear in the selector once their key file exists in `~/.config/omarchy-prompt/keys/<name>` with mode 600. The local `ollama` and `s24-llama` profiles appear once you set `"enabled": true`.
 

@@ -59,6 +59,18 @@ def extract_json(text):
             return json.loads(text[start:end + 1])
         except ValueError:
             pass
+    # Several objects or prose around them: take the last complete object.
+    decoder, found, i = json.JSONDecoder(), None, text.find("{")
+    while i >= 0:
+        try:
+            obj, length = decoder.raw_decode(text, i)
+            if isinstance(obj, dict):
+                found = obj
+            i = text.find("{", i + length)
+        except ValueError:
+            i = text.find("{", i + 1)
+    if found is not None:
+        return found
     raise BackendError("model did not return valid JSON")
 
 

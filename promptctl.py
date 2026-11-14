@@ -140,8 +140,6 @@ def cmd_improve(args):
             emit({"stage": "save_failed", "error": str(e)[:200]})
     try:
         config.remember_target(target_id)
-        if args.backend:
-            config.remember("backend", args.backend)
     except OSError:
         pass
 

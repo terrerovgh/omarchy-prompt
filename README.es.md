@@ -55,19 +55,19 @@ El que reescribe (el «motor») es independiente del modelo de destino. Se elige
 
 | Motor | CLI | Modelo por defecto | Cómo se desactivan las herramientas |
 |---|---|---|---|
+| pi | `pi` | DeepSeek Flash | `--no-tools --no-session --no-context-files` |
 | Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, sin MCP, sin settings, sin guardar sesión |
 | Codex | `codex exec` | GPT-6 Luna | `--sandbox read-only`, `--ephemeral` |
-| Antigravity | `agy` | Gemini 4 Hydrogen (`-low`) | En modo headless rechaza las herramientas que piden aprobación; nunca se pasa `--dangerously-skip-permissions` |
+| Antigravity | `agy` | Gemini 4 Hydrogen (`-low`) | En modo headless deniega las herramientas que piden aprobación (comandos, ediciones); nunca se pasa `--dangerously-skip-permissions`; sin slash commands |
 | Kimi | `kimi` (Kimi Code) | K2.8 Preview (`kimi-for-coding`) | Agente propio con `tools: []` |
-| pi | `pi` | DeepSeek Flash | `--no-tools --no-session --no-context-files` |
 | OpenCode | `opencode run` | El que tenga configurado | Agente temporal con permisos que lo deniegan todo |
 | Hermes | `hermes -z` | El que tenga configurado | **Desactivado por defecto:** Hermes no permite desactivar sus herramientas. Se habilita con `profiles.hermes.allow_tools: true` |
 
-**Auto** usa la primera herramienta instalada, en el orden de la tabla.
+El motor por defecto es **pi**. **Auto** usa la primera herramienta instalada en el orden de la tabla, y pi va primero. Elegir otro motor en la tarjeta vale solo para esa vez; para cambiar el predeterminado: `./promptctl.py config set backend claude`.
 
 Una herramienta cuenta como instalada solo si responde a `--version`, así que los shims viejos de mise no aparecen. La detección se guarda en caché 6 horas; `./promptctl.py engines --refresh` la repite. Cada ejecución corre en un directorio temporal vacío.
 
-Los adaptadores de Codex, Antigravity, OpenCode y Hermes siguen su documentación oficial, pero no se han probado en una máquina con esas herramientas instaladas.
+Claude, Codex, Antigravity, Kimi y pi se probaron de verdad, incluida una comprobación de que una selección que le pide al motor ejecutar `touch` no consigue crear el archivo. Los adaptadores de OpenCode y Hermes siguen su documentación oficial, pero no se han ejecutado.
 
 Los perfiles de API (`anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api`, `openrouter`) aparecen en el selector cuando existe su archivo de clave en `~/.config/omarchy-prompt/keys/<nombre>` con permisos 600. Los locales (`ollama`, `s24-llama`) aparecen cuando pones `"enabled": true`.
 

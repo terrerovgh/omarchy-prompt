@@ -115,7 +115,8 @@ class StoreTests(unittest.TestCase):
 
 class ExtractJsonTests(unittest.TestCase):
     def test_variants(self):
-        for text in ('{"a": 1}', '```json\n{"a": 1}\n```', '<think>x {y}</think>\nSure: {"a": 1} done'):
+        for text in ('{"a": 1}', '```json\n{"a": 1}\n```', '<think>x {y}</think>\nSure: {"a": 1} done',
+                     '{\n "a": 0\n}\n{"a": 1}\n'):
             self.assertEqual(backends.extract_json(text), {"a": 1})
         with self.assertRaises(backends.BackendError):
             backends.extract_json("no json here")
@@ -252,8 +253,11 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(log["stdin"].startswith("SYS"))
 
     def test_antigravity_never_skips_permissions(self):
-        out, log = self.run_engine("antigravity", json.dumps({"status": "SUCCESS", "response": json.dumps(GOOD)}))
-        self.assertEqual(backends.extract_json(out), GOOD)
+        out, log = self.run_engine("antigravity", json.dumps({"status": "SUCCESS", "response": "x", "structured_output": GOOD}))
+        self.assertEqual(out, GOOD)
+        self.assertIn("--disable-slash-commands", log["argv"])
+        with self.assertRaises(engines.EngineError):
+            self.run_engine("antigravity", json.dumps({"status": "SUCCESS", "response": "", "denied_actions": [{"action": "command"}]}))
         self.assertFalse(any("dangerously" in a for a in log["argv"]))
         self.assertEqual(log["argv"][log["argv"].index("--model") + 1], "gemini-4-hydrogen-low")
 
@@ -295,9 +299,9 @@ class EngineTests(unittest.TestCase):
         detected = {k: {"installed": k in ("kimi", "pi", "hermes")} for k in engines.ENGINES}
         with mock.patch.object(engines, "detect", return_value=detected):
             cfg = config.DEFAULTS
-            self.assertEqual(backends.resolve(cfg), "kimi")
+            self.assertEqual(backends.resolve(cfg), "pi")
             ids = [e["id"] for e in backends.available(cfg)]
-            self.assertEqual(ids[:3], ["kimi", "pi", "hermes"])
+            self.assertEqual(ids[:3], ["pi", "kimi", "hermes"])
             self.assertTrue([e for e in backends.available(cfg) if e["id"] == "hermes"][0]["blocked"])
             self.assertEqual(backends.resolve(cfg, "claude-cli"), "claude")  # old name
 

@@ -177,9 +177,12 @@ def _codex_build(system, user, schema, model, tmp, opts):
 
 
 def _agy_build(system, user, schema, model, tmp, opts):
-    # Headless Antigravity soft-denies every tool that needs approval (shell,
-    # edits) unless --dangerously-skip-permissions is given, which we never pass.
-    args = ["-p", _inline_prompt(system, user, schema), "--output-format", "json"]
+    # Headless Antigravity auto-denies every tool that needs approval (shell,
+    # edits; reported in "denied_actions") unless --dangerously-skip-permissions
+    # is given, which we never pass. Slash commands are off so a selection that
+    # starts with "/" is not expanded into a skill.
+    args = ["-p", _inline_prompt(system, user, schema), "--output-format", "json",
+            "--disable-slash-commands", "--json-schema", json.dumps(schema)]
     if model:
         args += ["--model", model]
     return args, None
@@ -189,6 +192,10 @@ def _agy_parse(stdout):
     data = json.loads(stdout)
     if data.get("status") not in (None, "SUCCESS"):
         raise EngineError(f"antigravity: {str(data.get('error') or data.get('status'))[:200]}")
+    if isinstance(data.get("structured_output"), dict):
+        return data["structured_output"]
+    if not data.get("response") and data.get("denied_actions"):
+        raise EngineError("antigravity tried to use a tool, which is blocked; no answer")
     return data.get("response", "")
 
 
@@ -282,7 +289,7 @@ ENGINES = {
 }
 
 # Preference order for backend "auto".
-AUTO_ORDER = ["claude", "codex", "antigravity", "kimi", "pi", "opencode", "hermes"]
+AUTO_ORDER = ["pi", "claude", "codex", "antigravity", "kimi", "opencode", "hermes"]
 
 
 # ---------------------------------------------------------------- detection
