@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "reviewed": "2026-11-14",
+  "default": "claude/opus-5.5",
+  "families": [
+    {
+      "id": "claude",
+      "label": "Claude (Anthropic)",
+      "guide": "claude.md",
+      "sources": [
+        "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview",
+        "https://platform.claude.com/docs/en/about-claude/models/overview.md"
+      ],
+      "versions": [
+        {"id": "fable-5.2", "label": "Claude Fable 5.2", "model": "claude-fable-5-2", "reasoning": true},
+        {"id": "opus-5.5", "label": "Claude Opus 5.5", "model": "claude-opus-5-5", "reasoning": true},
+        {"id": "sonnet-5.5", "label": "Claude Sonnet 5.5", "model": "claude-sonnet-5-5", "reasoning": true},
+        {"id": "haiku-5.5", "label": "Claude Haiku 5.5", "model": "claude-haiku-5-5", "reasoning": true},
+        {"id": "opus-5", "label": "Claude Opus 5", "model": "claude-opus-5", "reasoning": true},
+        {"id": "sonnet-5", "label": "Claude Sonnet 5", "model": "claude-sonnet-5", "reasoning": true},
+        {"id": "opus-4.8", "label": "Claude Opus 4.8", "model": "claude-opus-4-8", "reasoning": true},
+        {"id": "4.x", "label": "Claude 4.x (Sonnet 4.6, Haiku 4.5, …)", "model": "claude-sonnet-4-6", "reasoning": false}
+      ]
+    },
+    {
+      "id": "openai",
+      "label": "GPT (OpenAI)",
+      "guide": "openai.md",
+      "sources": [
+        "https://developers.openai.com/api/docs/guides/latest-model",
+        "https://developers.openai.com/api/docs/guides/prompt-engineering",
+        "https://developers.openai.com/api/docs/guides/reasoning-best-practices",
+        "https://developers.openai.com/api/docs/models"
+      ],
+      "versions": [
+        {"id": "gpt-6-astra", "label": "GPT-6 Astra", "model": "gpt-6-astra", "reasoning": true},
+        {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "model": "gpt-6.1-sol", "reasoning": true},
+        {"id": "gpt-6.1-terra", "label": "GPT-6.1 Terra", "model": "gpt-6.1-terra", "reasoning": true},
+        {"id": "gpt-6-luna", "label": "GPT-6 Luna", "model": "gpt-6-luna", "reasoning": true},
+        {"id": "gpt-5.6", "label": "GPT-5.6 (Sol / Terra)", "model": "gpt-5.6", "reasoning": true},
+        {"id": "o-series", "label": "o3 / o4-mini (legacy)", "model": "o3", "reasoning": true},
+        {"id": "gpt-4.1", "label": "GPT-4.1 / GPT-4o (legacy)", "model": "gpt-4.1", "reasoning": false}
+      ]
+    },
+    {
+      "id": "gemini",
+      "label": "Gemini (Google)",
+      "guide": "gemini.md",
+      "sources": [
+        "https://aistudio.google.com/docs/prompting-strategies",
+        "https://aistudio.google.com/docs/whats-new-gemini-3.6",
+        "https://aistudio.google.com/docs/models"
+      ],
+      "versions": [
+        {"id": "gemini-4-carbon", "label": "Gemini 4 Carbon", "model": "gemini-4-carbon", "reasoning": true},
+        {"id": "gemini-4-argon", "label": "Gemini 4 Argon", "model": "gemini-4-argon", "reasoning": true},
+        {"id": "gemini-4-hydrogen", "label": "Gemini 4 Hydrogen", "model": "gemini-4-hydrogen", "reasoning": true},
+        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash", "model": "gemini-3.8-flash", "reasoning": true},
+        {"id": "gemini-3.1-pro", "label": "Gemini 3.1 Pro", "model": "gemini-3.1-pro-preview", "reasoning": true},
+        {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "model": "gemini-3.6-flash", "reasoning": true},
+        {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite", "model": "gemini-3.5-flash-lite", "reasoning": true},
+        {"id": "gemini-2.5", "label": "Gemini 2.5 (legacy)", "model": "gemini-2.5-flash", "reasoning": true}
+      ]
+    },
+    {
+      "id": "kimi",
+      "label": "Kimi (Moonshot AI)",
+      "guide": "kimi.md",
+      "sources": [
+        "https://platform.kimi.ai/docs/introduction",
+        "https://platform.kimi.ai/docs/models.md"
+      ],
+      "versions": [
+        {"id": "k3.1-pro", "label": "Kimi K3.1 Pro", "model": "kimi-k3.1-pro", "reasoning": true},
+        {"id": "k3", "label": "Kimi K3", "model": "kimi-k3", "reasoning": true},
+        {"id": "k2.x", "label": "Kimi K2.6 / K2.7 Code (legacy)", "model": "kimi-k2.6", "reasoning": true}
+      ]
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "guide": "deepseek.md",
+      "sources": [
+        "https://api-docs.deepseek.com/",
+        "https://api-docs.deepseek.com/guides/thinking_mode"
+      ],
+      "versions": [
+        {"id": "v4-pro", "label": "DeepSeek V4 Pro", "model": "deepseek-v4-pro", "reasoning": true},
+        {"id": "v4.1-flash", "label": "DeepSeek V4.1 Flash", "model": "deepseek-flash", "reasoning": true},
+        {"id": "r1", "label": "DeepSeek-R1 (open weights, legacy)", "model": "deepseek-r1", "reasoning": true}
+      ]
+    },
+    {
+      "id": "qwen",
+      "label": "Qwen (Alibaba)",
+      "guide": "qwen.md",
+      "sources": [
+        "https://www.alibabacloud.com/help/en/model-studio/models",
+        "https://huggingface.co/Qwen/Qwen3.8-27B",
+        "https://qwen.readthedocs.io/en/latest/"
+      ],
+      "versions": [
+        {"id": "qwen4-max-preview", "label": "Qwen4 Max (preview)", "model": "qwen4-max-preview", "reasoning": true},
+        {"id": "qwen3.8", "label": "Qwen3.8 (open weights)", "model": "Qwen3.8-27B", "reasoning": true},
+        {"id": "qwen3.7-plus", "label": "Qwen3.7 Plus", "model": "qwen3.7-plus", "reasoning": true},
+        {"id": "qwen3.8-flash", "label": "Qwen3.8 Flash", "model": "qwen3.8-flash", "reasoning": true},
+        {"id": "qwen3", "label": "Qwen3 / Qwen3.6 local", "model": "Qwen3.6-27B", "reasoning": true}
+      ]
+    },
+    {
+      "id": "meta",
+      "label": "Meta (Muse / Llama)",
+      "guide": "meta.md",
+      "sources": [
+        "https://dev.meta.ai/llama/docs/how-to-guides/prompting/"
+      ],
+      "versions": [
+        {"id": "muse-spark-1.3", "label": "Muse Spark 1.3", "model": "muse-spark-1.3", "reasoning": true},
+        {"id": "muse-spark-open", "label": "Muse Spark Open", "model": "muse-spark-open", "reasoning": true},
+        {"id": "llama-4", "label": "Llama 4 (Maverick / Scout)", "model": "llama-4-maverick", "reasoning": false},
+        {"id": "llama-3", "label": "Llama 3.x local", "model": "llama-3.3", "reasoning": false}
+      ]
+    },
+    {
+      "id": "grok",
+      "label": "Grok (xAI)",
+      "guide": "grok.md",
+      "sources": [
+        "https://docs.x.ai/docs/models"
+      ],
+      "versions": [
+        {"id": "grok-4.7", "label": "Grok 4.7", "model": "grok-4.7", "reasoning": true},
+        {"id": "grok-4.20-reasoning", "label": "Grok 4.20 reasoning", "model": "grok-4.20-0309-reasoning", "reasoning": true},
+        {"id": "grok-4.20-non-reasoning", "label": "Grok 4.20 non-reasoning", "model": "grok-4.20-0309-non-reasoning", "reasoning": false}
+      ]
+    },
+    {
+      "id": "generic",
+      "label": "Other / generic",
+      "guide": "generic.md",
+      "sources": [],
+      "versions": [
+        {"id": "reasoning", "label": "Any reasoning model", "model": "", "reasoning": true},
+        {"id": "chat", "label": "Any chat model (no reasoning)", "model": "", "reasoning": false},
+        {"id": "small-local", "label": "Small local model (≤14B)", "model": "", "reasoning": false}
+      ]
+    }
+  ]
+}

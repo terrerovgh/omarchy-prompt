@@ -1,0 +1,16 @@
+#!/bin/bash
+# Improve the selected prompt in the Omarchy overlay
+# (plugin io.github.terrerovgh.prompt-improver). Bind it to a key, e.g. SUPER+ALT+P.
+# With --history it opens the saved-prompt history instead.
+
+if [[ $1 == --history ]]; then
+  exec omarchy-shell -q shell summon io.github.terrerovgh.prompt-improver '{"view":"history"}'
+fi
+
+text=$(wl-paste --primary --no-newline 2>/dev/null)
+if [[ -z ${text//[[:space:]]/} ]]; then
+  text=$(wl-paste --no-newline --type text 2>/dev/null)
+fi
+
+payload=$(jq -nc --arg t "${text:0:20000}" '{text: $t}')
+exec omarchy-shell -q shell summon io.github.terrerovgh.prompt-improver "$payload"
