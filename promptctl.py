@@ -422,6 +422,9 @@ def _on_term(_signum, _frame):
 
 
 def main(argv=None):
+    # Everything this tool writes (history, config, cache, temp files) is
+    # private to the user.
+    os.umask(0o077)
     signal.signal(signal.SIGTERM, _on_term)
     args = parser().parse_args(argv)
     try:

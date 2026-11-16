@@ -1,5 +1,6 @@
 """Prompt history in SQLite, with FTS5 search when the build supports it."""
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 
@@ -50,11 +51,29 @@ LIST_COLUMNS = (
 )
 
 
+def _private(path):
+    """Create the history directory 0700 and the database 0600.
+
+    Saved prompts can be private, so other local accounts must not read them
+    whatever the umask. Existing installs are tightened too. The directory
+    is only chmod-ed when it is the plugin's own (not a shared parent).
+    """
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.parent.name == "omarchy-prompt":
+        os.chmod(path.parent, 0o700)
+    os.close(os.open(path, os.O_RDWR | os.O_CREAT, 0o600))
+    os.chmod(path, 0o600)
+    for suffix in ("-journal", "-wal", "-shm"):
+        side = path.with_name(path.name + suffix)
+        if side.exists():
+            os.chmod(side, 0o600)
+
+
 class Store:
     def __init__(self, path=None, fts=True):
         self.path = path or paths.history_path()
         if str(self.path) != ":memory:":
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            _private(self.path)
         self.db = sqlite3.connect(str(self.path), timeout=5)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)

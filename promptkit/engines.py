@@ -222,4 +222,5 @@ def run(engine_id, profile, system, user, schema, timeout):
     try:
         return spec_["parse"](stdout)
     except ValueError as e:
-        raise EngineError(f"{spec_['label']}: unreadable output") from e
+        reason = str(e) if "result discarded" in str(e) else "unreadable output"
+        raise EngineError(f"{spec_['label']}: {reason}") from e

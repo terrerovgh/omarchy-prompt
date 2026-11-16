@@ -76,7 +76,7 @@ El que reescribe (el «motor») es independiente del modelo de destino. Se elige
 
 | Motor | CLI | Modelo | Cómo se desactivan las herramientas |
 |---|---|---|---|
-| Codex | `codex exec` | GPT-6 Luna | `--sandbox read-only`, `--ephemeral` |
+| Codex | `codex exec` | GPT-6 Luna | Shell, unified exec, code mode, apps, plugins, hooks y navegador desactivados; se ignoran tu `config.toml` y tus reglas (sin servidores MCP); búsqueda web apagada; `--sandbox read-only`, `--ephemeral`. Si aun así Codex llama a una herramienta, el resultado se descarta |
 | Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, sin MCP, sin settings, sin guardar sesión |
 
 **Integraciones opcionales.** Las demás CLIs de IA son integraciones opcionales, al estilo de las integraciones de herdr. Su código no se carga y su CLI no se busca hasta que instalas la integración:
@@ -95,7 +95,7 @@ El que reescribe (el «motor») es independiente del modelo de destino. Se elige
 | `opencode` | `opencode run` | El modelo por defecto de OpenCode | Agente temporal con permisos que lo deniegan todo (adaptador sin ejecutar todavía) |
 | `hermes` | `hermes -z` | El modelo por defecto de Hermes | No permite desactivar sus herramientas, así que queda bloqueado hasta que pongas `profiles.hermes.allow_tools: true` (adaptador sin ejecutar todavía) |
 
-Una herramienta cuenta como instalada solo si responde a `--version`, así que los shims viejos no aparecen. La detección se guarda en caché 6 horas; añade `--refresh` para repetirla. Cada ejecución corre en un directorio temporal privado y vacío. Codex, Claude, pi, Kimi y Antigravity se probaron de verdad, incluida una comprobación de que una selección que pide ejecutar `touch` no consigue crear el archivo.
+Una herramienta cuenta como instalada solo si responde a `--version`, así que los shims viejos no aparecen. La detección se guarda en caché 6 horas; añade `--refresh` para repetirla. Cada ejecución corre en un directorio temporal privado y vacío. Codex, Claude, pi, Kimi y Antigravity se probaron de verdad, incluidas comprobaciones de que una selección que pide ejecutar `touch` no consigue crear un archivo, y de que una que pide a Codex (o a un subagente suyo) hacer `cat` de otro archivo no consigue leerlo.
 
 **Perfiles de API.** `anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api` y `openrouter` aparecen en el selector cuando existe su archivo de clave en `~/.config/omarchy-prompt/keys/<nombre>` con permisos 600. Los locales (`ollama`, `s24-llama`) aparecen cuando pones `"enabled": true`.
 
@@ -124,7 +124,7 @@ Para añadir una versión de modelo, edita `models.json`. Para añadir una famil
 
 - **Traducción:** el texto se envía a Google Translate, igual que en omarchy-translate.
 - **Reescritura:** el texto se envía al backend que hayas configurado.
-- **Historial:** se guarda solo en local, en `~/.local/share/omarchy-prompt/history.sqlite3`.
+- **Historial:** se guarda solo en local, en `~/.local/share/omarchy-prompt/history.sqlite3`. La carpeta se crea con permisos `0700` y la base de datos con `0600`, sea cual sea tu umask, y las instalaciones anteriores se corrigen la próxima vez que se usa el plugin, así que otras cuentas del equipo no pueden leer tus prompts.
 - **Nunca en una línea de comandos:** el launcher no lee la selección. La lee el plugin con `wl-paste` a través de un pipe, y el texto llega a `promptctl.py`, a los motores y a `wl-copy` solo por stdin o por archivos en un directorio temporal privado (modo 700). Otras cuentas locales no pueden verlo en `/proc/*/cmdline`, y nunca pasa por un shell. Cada motor CLI corre con sus herramientas desactivadas (ver la tabla de motores), en un directorio temporal vacío. Kimi Code guarda igualmente una sesión por ejecución, porque no tiene opción para evitarlo.
 - **Inyección de prompts:** el texto seleccionado se trata como material a reescribir, nunca como instrucciones. La respuesta del modelo se valida con un esquema JSON y siempre se muestra como texto plano.
 

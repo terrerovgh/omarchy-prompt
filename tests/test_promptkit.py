@@ -87,6 +87,25 @@ class StoreTests(unittest.TestCase):
         base.update(kw)
         return base
 
+    def test_history_is_private(self):
+        old = os.umask(0o022)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "share" / "omarchy-prompt" / "history.sqlite3"
+                db = store.Store(path)
+                db.add(self.entry())
+                db.close()
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+                # an existing world-readable install is tightened on next open
+                os.chmod(path, 0o644)
+                os.chmod(path.parent, 0o755)
+                store.Store(path).close()
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        finally:
+            os.umask(old)
+
     def check(self, fts):
         db = store.Store(Path(":memory:"), fts=fts)
         a = db.add(self.entry())
@@ -246,14 +265,39 @@ class EngineTests(unittest.TestCase):
             self.assertIn(flag, log["argv"])
         self.assertEqual(backends.extract_json(out), GOOD)
 
-    def test_codex_read_only_ephemeral(self):
-        _, log = self.run_engine("codex", json.dumps(GOOD))
+    @staticmethod
+    def codex_events(*items):
+        lines = [json.dumps({"type": "thread.started"})]
+        lines += [json.dumps({"type": "item.completed", "item": it}) for it in items]
+        return "\n".join(lines)
+
+    def test_codex_has_no_tools(self):
+        stdout = self.codex_events(
+            {"type": "error", "message": "Code Mode is unavailable"},
+            {"type": "agent_message", "text": "Rewriting now."},
+            {"type": "agent_message", "text": json.dumps(GOOD)},
+        )
+        out, log = self.run_engine("codex", stdout)
+        self.assertEqual(backends.extract_json(out), GOOD)
         argv = log["argv"]
         self.assertEqual(argv[argv.index("--sandbox") + 1], "read-only")
-        self.assertIn("--ephemeral", argv)
+        for flag in ("--ephemeral", "--ignore-user-config", "--ignore-rules", "--json"):
+            self.assertIn(flag, argv)
+        disabled = {argv[i + 1] for i, a in enumerate(argv) if a == "--disable"}
+        self.assertTrue({"shell_tool", "unified_exec", "code_mode_host", "apps", "plugins", "hooks"} <= disabled)
+        self.assertIn('web_search="disabled"', argv)
         self.assertEqual(argv[argv.index("--model") + 1], "gpt-6-luna")
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", argv)
         self.assertTrue(log["stdin"].startswith("SYS"))
+
+    def test_codex_tool_call_discards_result(self):
+        for kind in ("command_execution", "collab_tool_call", "mcp_tool_call", "web_search", "file_change"):
+            stdout = self.codex_events(
+                {"type": kind, "command": "cat ~/secret"},
+                {"type": "agent_message", "text": json.dumps(GOOD)},
+            )
+            with self.assertRaisesRegex(engines.EngineError, "result discarded"):
+                self.run_engine("codex", stdout)
 
     def test_antigravity_never_skips_permissions(self):
         out, log = self.run_engine("antigravity", json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "x", "structured_output": GOOD}}))
@@ -284,7 +328,7 @@ class EngineTests(unittest.TestCase):
             "claude": json.dumps({"is_error": False, "structured_output": GOOD}),
             "kimi": json.dumps({"role": "assistant", "content": json.dumps(GOOD)}),
             "pi": json.dumps(GOOD),
-            "codex": json.dumps(GOOD),
+            "codex": json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(GOOD)}}),
             "antigravity": json.dumps({"event": "result", "result": {"status": "SUCCESS", "structured_output": GOOD}}),
             "opencode": json.dumps(GOOD),
             "hermes": json.dumps(GOOD),

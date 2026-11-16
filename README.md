@@ -76,7 +76,7 @@ The rewriter (the "engine") is a separate choice from the target model. Pick it 
 
 | Engine | CLI | Model | How tools are kept off |
 |---|---|---|---|
-| Codex | `codex exec` | GPT-6 Luna | `--sandbox read-only`, `--ephemeral` |
+| Codex | `codex exec` | GPT-6 Luna | Shell, unified exec, code mode, apps, plugins, hooks and browser features disabled; your `config.toml` and rules ignored (no MCP servers); web search off; `--sandbox read-only`, `--ephemeral`. If Codex still calls any tool, the result is thrown away |
 | Claude | `claude` (Claude Code) | Sonnet 5.5 | `--tools ""`, no MCP, no settings, no saved session |
 
 **Optional integrations.** Other AI CLIs are optional integrations, the way herdr handles its agent integrations. Their code is not loaded and their CLI is not probed until you install the integration:
@@ -95,7 +95,7 @@ The rewriter (the "engine") is a separate choice from the target model. Pick it 
 | `opencode` | `opencode run` | OpenCode's default model | Temporary agent whose permissions deny everything (adapter not run yet) |
 | `hermes` | `hermes -z` | Hermes's default model | Cannot disable its tools, so it stays blocked until you set `profiles.hermes.allow_tools: true` (adapter not run yet) |
 
-A tool counts as installed only when it answers `--version`, so leftover shims are ignored. Detection is cached for 6 hours; add `--refresh` to re-check. Every run happens in an empty private temporary directory. Codex, Claude, pi, Kimi and Antigravity were tested for real, including a check that a selection asking the engine to run `touch` cannot create the file.
+A tool counts as installed only when it answers `--version`, so leftover shims are ignored. Detection is cached for 6 hours; add `--refresh` to re-check. Every run happens in an empty private temporary directory. Codex, Claude, pi, Kimi and Antigravity were tested for real, including checks that a selection asking the engine to run `touch` cannot create a file, and that one asking it (or a Codex sub-agent) to `cat` another file cannot read it.
 
 **API profiles.** `anthropic-api`, `openai-api`, `gemini-api`, `kimi-api`, `deepseek-api` and `openrouter` appear in the selector once their key file exists in `~/.config/omarchy-prompt/keys/<name>` with mode 600. The local `ollama` and `s24-llama` profiles appear once you set `"enabled": true`.
 
@@ -154,7 +154,7 @@ echo "escribe un email anunciando una subida de precios" | ./promptctl.py improv
 
 - **Translation:** the selected text is sent to Google Translate's keyless endpoints, just like omarchy-translate.
 - **Rewriting:** the selected text is sent to the configured backend: Anthropic through Claude Code or the API, or whichever provider or local server you configure.
-- **History:** stored locally in `~/.local/share/omarchy-prompt/history.sqlite3`.
+- **History:** stored locally in `~/.local/share/omarchy-prompt/history.sqlite3`. The folder is created `0700` and the database `0600`, whatever your umask, and older installs are tightened the next time the plugin runs, so other accounts on the machine cannot read your prompts.
 - **Never in a command line:** the launcher does not read the selection. The plugin reads it with `wl-paste` through a pipe, and passes text to `promptctl.py`, the engines and `wl-copy` only through stdin or files in a private temporary directory (mode 700). Other local accounts cannot see it in `/proc/*/cmdline`, and it never runs through a shell. Every CLI engine runs with its tools off (see the engine table), in an empty temporary directory. Kimi Code still records a session per run, because it has no option to skip that.
 - **Prompt injection:** the selected text is wrapped in tags and marked as material to rewrite, not instructions. Model output is validated against a JSON schema and always shown as plain text.
 - **Limits:** input is capped at 20 000 characters and HTTP responses at 1 MB. The default timeout is 90 s.
